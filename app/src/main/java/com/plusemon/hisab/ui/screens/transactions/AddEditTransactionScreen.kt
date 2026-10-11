@@ -93,6 +93,8 @@ import com.plusemon.hisab.ui.theme.ExpenseRed
 import com.plusemon.hisab.ui.theme.IncomeGreen
 import com.plusemon.hisab.ui.theme.TransferBlue
 import com.plusemon.hisab.ui.viewmodel.HisabViewModel
+import com.plusemon.hisab.ui.viewmodel.AccountWithBalance
+import com.plusemon.hisab.ui.components.TransactionBalancePreviewCard
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -372,12 +374,14 @@ fun AddEditTransactionScreen(
                     currSymbol = currSymbol,
                     isBn = isBn,
                     availableAccounts = availableAccounts,
+                    accountsWithBalances = accountsWithBalances,
                     selectedAccountId = selectedAccountId,
                     onSelectAccountId = { selectedAccountId = it },
                     selectedToAccountId = selectedToAccountId,
                     onSelectToAccountId = { selectedToAccountId = it },
                     feeText = feeText,
                     onFeeChange = { feeText = it },
+                    exchangeRateText = exchangeRateText,
                     categories = typeCategories,
                     selectedCategoryId = selectedCategoryId,
                     onSelectCategoryId = { selectedCategoryId = it },
@@ -512,12 +516,14 @@ fun AddEditTransactionScreen(
                             currSymbol = currSymbol,
                             isBn = isBn,
                             availableAccounts = availableAccounts,
+                            accountsWithBalances = accountsWithBalances,
                             selectedAccountId = selectedAccountId,
                             onSelectAccountId = { selectedAccountId = it },
                             selectedToAccountId = selectedToAccountId,
                             onSelectToAccountId = { selectedToAccountId = it },
                             feeText = feeText,
                             onFeeChange = { feeText = it },
+                            exchangeRateText = exchangeRateText,
                             categories = pageCategories,
                             selectedCategoryId = selectedCategoryId,
                             onSelectCategoryId = { selectedCategoryId = it },
@@ -550,12 +556,14 @@ private fun TransactionFormFields(
     currSymbol: String,
     isBn: Boolean,
     availableAccounts: List<UserAccount>,
+    accountsWithBalances: List<AccountWithBalance>,
     selectedAccountId: Long,
     onSelectAccountId: (Long) -> Unit,
     selectedToAccountId: Long,
     onSelectToAccountId: (Long) -> Unit,
     feeText: String,
     onFeeChange: (String) -> Unit,
+    exchangeRateText: String,
     categories: List<Category>,
     selectedCategoryId: Long?,
     onSelectCategoryId: (Long) -> Unit,
@@ -889,6 +897,35 @@ private fun TransactionFormFields(
             )
             Spacer(modifier = Modifier.height(12.dp))
         }
+
+        val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
+        val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+        val amountVal = amountText.toDoubleOrNull() ?: 0.0
+        val feeVal = feeText.toDoubleOrNull() ?: 0.0
+        val exchangeRateVal = exchangeRateText.toDoubleOrNull() ?: 1.0
+
+        val resultingBalance = when (type) {
+            TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
+            TransactionType.INCOME -> currentBalance + amountVal
+            TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
+        }
+
+        val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
+        val targetCurrentBalance = targetAccountWithBal?.balance
+        val resultingTargetBalance = if (targetCurrentBalance != null) {
+            targetCurrentBalance + (amountVal * exchangeRateVal)
+        } else null
+
+        TransactionBalancePreviewCard(
+            transactionType = type,
+            currentBalance = currentBalance,
+            resultingBalance = resultingBalance,
+            targetCurrentBalance = targetCurrentBalance,
+            resultingTargetBalance = resultingTargetBalance,
+            currencySymbol = currSymbol,
+            isBn = isBn
+        )
+        Spacer(modifier = Modifier.height(12.dp))
 
         if (errorMessage != null) {
             Text(

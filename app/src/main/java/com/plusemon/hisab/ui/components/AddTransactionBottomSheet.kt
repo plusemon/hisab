@@ -708,6 +708,34 @@ fun AddTransactionBottomSheet(
                         Spacer(modifier = Modifier.height(12.dp))
                     }
 
+                    val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
+                    val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+                    val amountVal = amountText.toDoubleOrNull() ?: 0.0
+                    val feeVal = feeText.toDoubleOrNull() ?: 0.0
+
+                    val resultingBalance = when (pageType) {
+                        TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
+                        TransactionType.INCOME -> currentBalance + amountVal
+                        TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
+                    }
+
+                    val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
+                    val targetCurrentBalance = targetAccountWithBal?.balance
+                    val resultingTargetBalance = if (targetCurrentBalance != null) {
+                        targetCurrentBalance + amountVal
+                    } else null
+
+                    TransactionBalancePreviewCard(
+                        transactionType = pageType,
+                        currentBalance = currentBalance,
+                        resultingBalance = resultingBalance,
+                        targetCurrentBalance = targetCurrentBalance,
+                        resultingTargetBalance = resultingTargetBalance,
+                        currencySymbol = currSymbol,
+                        isBn = isBn
+                    )
+                    Spacer(modifier = Modifier.height(12.dp))
+
                     if (errorMessage != null) {
                         Text(
                             text = errorMessage!!,

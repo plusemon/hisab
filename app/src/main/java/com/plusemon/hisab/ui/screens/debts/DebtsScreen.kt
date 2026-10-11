@@ -1098,7 +1098,7 @@ fun ContactLedgerContent(
                         )
                         Spacer(modifier = Modifier.width(6.dp))
                         Text(
-                            text = if (isBn) "+ এন্ট্রি যোগ করুন" else "+ Add Entry",
+                            text = if (isBn) "এন্ট্রি যোগ করুন" else "Add Entry",
                             fontSize = 13.sp,
                             fontWeight = FontWeight.SemiBold
                         )
@@ -3327,7 +3327,7 @@ fun AddShopCreditBottomSheet(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = if (isBangla) "+ নতুন শপ" else "+ Add New Shop",
+                                        text = if (isBangla) "নতুন শপ" else "Add New Shop",
                                         fontWeight = FontWeight.Bold,
                                         color = MaterialTheme.colorScheme.primary
                                     )

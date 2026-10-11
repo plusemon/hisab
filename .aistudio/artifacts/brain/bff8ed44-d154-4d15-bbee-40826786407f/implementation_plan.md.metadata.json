@@ -1,6 +1,6 @@
 {
-  "summary":  "Comprehensive architectural and design plan to audit and standardize global layout margins, 16dp horizontal edge padding, 16dp vertical section spacing, 16dp content card corner radii with 1dp borders, 24dp bottom sheet top radii, 20dp dialog container radii, 52dp full-width action buttons, standard bottom sheet top headers with drag handle and explicit close icon, unified input field containers, and scrollable chip padding across all screens, dialogs, and Modal Bottom Sheets.",
-  "updatedAt":  "2026-10-10T04:44:10.609910583Z",
+  "summary":  "Implementation plan for showing resulting account balance preview and negative balance warning before confirming transaction in AddTransactionBottomSheet and AddEditTransactionScreen.",
+  "updatedAt":  "2026-10-11T09:07:20.413856808Z",
   "requestFeedback":  true,
   "userFacing":  true
 }
