@@ -81,6 +81,7 @@ fun RecurringScreen(
     val useBnDigits = settings.numeralSystem == "bn"
     val hideBalances = settings.hideBalances
     val currSymbol = settings.currencySymbol
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
 
     val recurringRules by viewModel.recurringRules.collectAsState()
     val accountsWithBalances by viewModel.accountsWithBalances.collectAsState()
@@ -143,6 +144,7 @@ fun RecurringScreen(
             DetailTopAppBar(
                 title = Localization.getString(Localization.Key.RECURRING_TRANSACTIONS, isBn),
                 onNavigateBack = onNavigateBack,
+                isNetworkConnected = isNetworkConnected,
                 actions = {
                     IconButton(
                         onClick = { showAddDialog = true },

@@ -147,6 +147,7 @@ fun HisabMainApp(
     val currentUser by viewModel.currentUser.collectAsState()
     val updateUiState by viewModel.updateUiState.collectAsState()
     val syncStatus by viewModel.appSyncStatus.collectAsState()
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
     val isBn = settings.language == "bn"
 
     val mainRoutes = remember {
@@ -260,6 +261,7 @@ fun HisabMainApp(
                     user = currentUser,
                     settings = settings,
                     syncStatus = syncStatus,
+                    isNetworkConnected = isNetworkConnected,
                     onSyncClick = { viewModel.triggerManualSync() },
                     onToggleDarkMode = { viewModel.toggleDarkMode() },
                     onSetThemeMode = { useSystem, isDark -> viewModel.setThemeMode(useSystem, isDark) },

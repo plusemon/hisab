@@ -98,6 +98,7 @@ fun AccountsScreen(
     val isBn = settings.language == "bn"
     val useBnDigits = settings.numeralSystem == "bn"
     val hideBalances = settings.hideBalances
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
     val currSymbol = settings.currencySymbol
 
     val accountsWithBalances by viewModel.accountsWithBalances.collectAsState()
@@ -173,6 +174,7 @@ fun AccountsScreen(
                 DetailTopAppBar(
                     title = currentAcc.name,
                     onNavigateBack = { selectedAccountForDetail = null },
+                    isNetworkConnected = isNetworkConnected,
                     actions = {
                         IconButton(
                             onClick = { editingAccount = currentAcc },
@@ -205,6 +207,7 @@ fun AccountsScreen(
                 DetailTopAppBar(
                     title = Localization.getString(Localization.Key.MY_ACCOUNTS, isBn),
                     onNavigateBack = onNavigateBack,
+                    isNetworkConnected = isNetworkConnected,
                     actions = {
                         IconButton(
                             onClick = { isAddingAccount = true },

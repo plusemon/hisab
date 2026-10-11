@@ -2,10 +2,12 @@ package com.plusemon.hisab.ui.components
 
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -36,6 +38,7 @@ fun DetailTopAppBar(
     onNavigateBack: () -> Unit,
     modifier: Modifier = Modifier,
     navigationIconDescription: String = "Back",
+    isNetworkConnected: Boolean = true,
     actions: @Composable RowScope.() -> Unit = {}
 ) {
     Surface(
@@ -71,7 +74,11 @@ fun DetailTopAppBar(
                     )
                 }
             },
-            actions = actions,
+            actions = {
+                NetworkStatusIcon(isConnected = isNetworkConnected)
+                Spacer(modifier = Modifier.width(8.dp))
+                actions()
+            },
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = Color.Transparent,
                 titleContentColor = MaterialTheme.colorScheme.onSurface,

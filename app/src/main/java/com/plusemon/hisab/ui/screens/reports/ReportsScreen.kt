@@ -88,6 +88,7 @@ fun ReportsScreen(
     val useBnDigits = settings.numeralSystem == "bn"
     val hideBalances = settings.hideBalances
     val currSymbol = settings.currencySymbol
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
 
     val allTransactions by viewModel.transactions.collectAsState()
 
@@ -128,7 +129,8 @@ fun ReportsScreen(
             if (onNavigateBack != null) {
                 DetailTopAppBar(
                     title = Localization.getString(Localization.Key.REPORTS, isBn),
-                    onNavigateBack = onNavigateBack
+                    onNavigateBack = onNavigateBack,
+                    isNetworkConnected = isNetworkConnected
                 )
             }
         }

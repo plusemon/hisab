@@ -109,6 +109,7 @@ fun AddEditTransactionScreen(
     val settings by viewModel.settings.collectAsState()
     val isBn = settings.language == "bn"
     val currSymbol = settings.currencySymbol
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
 
     val accountsWithBalances by viewModel.accountsWithBalances.collectAsState()
     val categories by viewModel.categories.collectAsState()
@@ -332,6 +333,7 @@ fun AddEditTransactionScreen(
             DetailTopAppBar(
                 title = titleText,
                 onNavigateBack = onNavigateBack,
+                isNetworkConnected = isNetworkConnected,
                 actions = {
                     if (existingTransaction != null) {
                         IconButton(

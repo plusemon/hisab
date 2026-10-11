@@ -85,6 +85,7 @@ fun SettingsScreen(
     val settings by viewModel.settings.collectAsState()
     val isBn = settings.language == "bn"
     val currentUser by viewModel.currentUser.collectAsState()
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
@@ -144,7 +145,8 @@ fun SettingsScreen(
         topBar = {
             DetailTopAppBar(
                 title = Localization.getString(Localization.Key.SETTINGS, isBn),
-                onNavigateBack = onNavigateBack
+                onNavigateBack = onNavigateBack,
+                isNetworkConnected = isNetworkConnected
             )
         }
     ) { padding ->

@@ -85,6 +85,7 @@ fun ManageCategoriesScreen(
     val settings by viewModel.settings.collectAsState()
     val isBn = settings.language == "bn"
     val allCategories by viewModel.categories.collectAsState()
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
 
     val pagerState = rememberPagerState(initialPage = 0) { 2 }
     val coroutineScope = rememberCoroutineScope()
@@ -106,7 +107,8 @@ fun ManageCategoriesScreen(
         topBar = {
             DetailTopAppBar(
                 title = if (isBn) "ক্যাটাগরি ব্যবস্থাপনা" else "Manage Categories",
-                onNavigateBack = onNavigateBack
+                onNavigateBack = onNavigateBack,
+                isNetworkConnected = isNetworkConnected
             )
         },
         floatingActionButton = {

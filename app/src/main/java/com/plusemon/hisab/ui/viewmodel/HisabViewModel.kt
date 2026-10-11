@@ -103,6 +103,9 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     private val _appSyncStatus = MutableStateFlow<AppSyncStatus>(AppSyncStatus.Synced())
     val appSyncStatus = _appSyncStatus.asStateFlow()
 
+    private val _isNetworkConnected = MutableStateFlow(true)
+    val isNetworkConnected: StateFlow<Boolean> = _isNetworkConnected.asStateFlow()
+
     fun markSaving() {
         _appSyncStatus.value = AppSyncStatus.Saving
     }
@@ -259,6 +262,44 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         }
         // Check for app updates silently on startup
         checkForUpdates(isManual = false)
+        startNetworkMonitoring()
+    }
+
+    private fun startNetworkMonitoring() {
+        val application = getApplication<Application>()
+        val connectivityManager = application.getSystemService(android.content.Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager
+        if (connectivityManager == null) return
+
+        val initialCapabilities = connectivityManager.activeNetwork?.let { connectivityManager.getNetworkCapabilities(it) }
+        val initialConnected = initialCapabilities?.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) == true &&
+                initialCapabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        _isNetworkConnected.value = initialConnected
+
+        val request = android.net.NetworkRequest.Builder()
+            .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            .build()
+
+        val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                _isNetworkConnected.value = true
+            }
+
+            override fun onLost(network: android.net.Network) {
+                _isNetworkConnected.value = false
+            }
+
+            override fun onCapabilitiesChanged(network: android.net.Network, networkCapabilities: android.net.NetworkCapabilities) {
+                val hasInternet = networkCapabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                        networkCapabilities.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+                _isNetworkConnected.value = hasInternet
+            }
+        }
+
+        try {
+            connectivityManager.registerNetworkCallback(request, callback)
+        } catch (e: Exception) {
+            // Safe fallback
+        }
     }
 
     private fun syncWithFirestore(userId: String) {

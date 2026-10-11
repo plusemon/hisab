@@ -59,6 +59,7 @@ fun DashboardHeader(
     user: User?,
     settings: UserSettings,
     syncStatus: AppSyncStatus = AppSyncStatus.Synced(),
+    isNetworkConnected: Boolean = true,
     onSyncClick: () -> Unit = {},
     onToggleDarkMode: () -> Unit = {},
     onSetThemeMode: (useSystem: Boolean, isDark: Boolean) -> Unit = { _, _ -> },
@@ -148,11 +149,13 @@ fun DashboardHeader(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Right side: Action Controls (Language Pill, Theme Switcher)
+                // Right side: Action Controls (Network Status, Language Pill, Theme Switcher)
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
+                    NetworkStatusIcon(isConnected = isNetworkConnected)
+
                     // Language Switch Button (Pill Design matching uploaded screenshot: [ 文A EN / বাং ])
                     Surface(
                         modifier = Modifier

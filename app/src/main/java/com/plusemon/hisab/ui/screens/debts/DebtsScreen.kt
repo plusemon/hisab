@@ -153,6 +153,7 @@ fun DebtsScreen(
     val hideBalances = settings.hideBalances
     val currSymbol = settings.currencySymbol
     val context = LocalContext.current
+    val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
 
     val debtPagerState = rememberPagerState(initialPage = 0) { 2 }
     val coroutineScope = rememberCoroutineScope()
@@ -332,6 +333,7 @@ fun DebtsScreen(
                         selectedContactId = null
                         selectedVendorId = null
                     },
+                    isNetworkConnected = isNetworkConnected,
                     actions = {
                         if (phoneToCall.isNotBlank()) {
                             IconButton(
@@ -370,6 +372,7 @@ fun DebtsScreen(
                         selectedContactId = null
                         selectedVendorId = null
                     },
+                    isNetworkConnected = isNetworkConnected,
                     actions = {
                         if (activeVendor.phone.isNotBlank()) {
                             IconButton(
