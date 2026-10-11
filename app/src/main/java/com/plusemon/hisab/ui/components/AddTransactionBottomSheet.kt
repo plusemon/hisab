@@ -732,7 +732,10 @@ fun AddTransactionBottomSheet(
                         targetCurrentBalance = targetCurrentBalance,
                         resultingTargetBalance = resultingTargetBalance,
                         currencySymbol = currSymbol,
-                        isBn = isBn
+                        isBn = isBn,
+                        accountName = selectedAccountWithBal?.account?.name,
+                        targetAccountName = targetAccountWithBal?.account?.name,
+                        amount = amountVal
                     )
                     Spacer(modifier = Modifier.height(12.dp))
 
