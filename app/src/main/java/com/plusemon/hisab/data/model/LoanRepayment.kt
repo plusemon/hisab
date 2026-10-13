@@ -30,5 +30,6 @@ data class LoanRepayment(
     val accountId: Long,
     val amount: Double,
     val dateTimestamp: Long = System.currentTimeMillis(),
-    val note: String = ""
+    val note: String = "",
+    val transactionId: Long? = null
 )

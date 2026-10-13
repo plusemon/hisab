@@ -133,26 +133,30 @@ class HisabRepository(
                 }
             }
 
-            // Loans & Debts account adjustments:
+            // Loans & Debts account adjustments (only for legacy records without linked transaction records):
             val loanMap = loans.associateBy { it.id }
             for (debt in loans) {
-                val curr = balanceMap[debt.accountId] ?: 0.0
-                if (debt.type == DebtType.OWED_TO_ME) {
-                    balanceMap[debt.accountId] = curr - debt.amount
-                } else {
-                    balanceMap[debt.accountId] = curr + debt.amount
+                if (debt.transactionId == null) {
+                    val curr = balanceMap[debt.accountId] ?: 0.0
+                    if (debt.type == DebtType.OWED_TO_ME) {
+                        balanceMap[debt.accountId] = curr - debt.amount
+                    } else {
+                        balanceMap[debt.accountId] = curr + debt.amount
+                    }
                 }
             }
 
-            // Repayments account adjustments:
+            // Repayments account adjustments (only for legacy records without linked transaction records):
             for (rep in repayments) {
-                val loan = loanMap[rep.loanId]
-                if (loan != null) {
-                    val curr = balanceMap[rep.accountId] ?: 0.0
-                    if (loan.type == DebtType.OWED_TO_ME) {
-                        balanceMap[rep.accountId] = curr + rep.amount
-                    } else {
-                        balanceMap[rep.accountId] = curr - rep.amount
+                if (rep.transactionId == null) {
+                    val loan = loanMap[rep.loanId]
+                    if (loan != null) {
+                        val curr = balanceMap[rep.accountId] ?: 0.0
+                        if (loan.type == DebtType.OWED_TO_ME) {
+                            balanceMap[rep.accountId] = curr + rep.amount
+                        } else {
+                            balanceMap[rep.accountId] = curr - rep.amount
+                        }
                     }
                 }
             }
@@ -261,6 +265,29 @@ class HisabRepository(
     fun getLoanRepayments(userId: String): Flow<List<LoanRepayment>> = loanRepaymentDao.getAllRepaymentsForUser(userId)
     fun getRepaymentsForLoan(loanId: Long): Flow<List<LoanRepayment>> = loanRepaymentDao.getRepaymentsForLoan(loanId)
 
+    private suspend fun getOrCreateCategory(
+        userId: String,
+        type: TransactionType,
+        nameBn: String,
+        nameEn: String,
+        iconName: String,
+        colorHex: String
+    ): Long {
+        val existing = categoryDao.getCategoriesByTypeSync(userId, type)
+        val found = existing.find { it.nameEn == nameEn || it.nameBn == nameBn }
+        if (found != null) return found.id
+        val newCat = Category(
+            userId = userId,
+            nameBn = nameBn,
+            nameEn = nameEn,
+            type = type,
+            iconName = iconName,
+            colorHex = colorHex,
+            isDefault = true
+        )
+        return categoryDao.insertCategory(newCat)
+    }
+
     suspend fun addLoanDebt(debt: LoanDebt): Long = withContext(Dispatchers.IO) {
         var cId = debt.contactId
         val trimmedName = debt.personName.trim()
@@ -283,13 +310,94 @@ class HisabRepository(
                 contactDao.updateContact(existing.copy(phone = trimmedPhone))
             }
         }
-        val finalDebt = debt.copy(contactId = cId, personName = trimmedName, phone = trimmedPhone)
+
+        // Automatic transaction creation for account ledger reconciliation
+        val txType = if (debt.type == DebtType.OWED_TO_ME) TransactionType.EXPENSE else TransactionType.INCOME
+        val catNameBn = if (debt.type == DebtType.OWED_TO_ME) "ধার প্রদান" else "ধার গ্রহণ"
+        val catNameEn = if (debt.type == DebtType.OWED_TO_ME) "Loan Given" else "Loan Received"
+        val catIcon = if (debt.type == DebtType.OWED_TO_ME) "payments" else "account_balance_wallet"
+        val catColor = if (debt.type == DebtType.OWED_TO_ME) "#EF4444" else "#10B981"
+
+        val catId = getOrCreateCategory(
+            userId = debt.userId,
+            type = txType,
+            nameBn = catNameBn,
+            nameEn = catNameEn,
+            iconName = catIcon,
+            colorHex = catColor
+        )
+
+        val txNote = when (debt.type) {
+            DebtType.OWED_TO_ME -> "ধার প্রদান: $trimmedName ${if (debt.note.isNotBlank()) "(${debt.note})" else ""}".trim()
+            DebtType.I_OWE -> "ধার গ্রহণ: $trimmedName ${if (debt.note.isNotBlank()) "(${debt.note})" else ""}".trim()
+        }
+
+        val tx = TransactionRecord(
+            userId = debt.userId,
+            accountId = debt.accountId,
+            categoryId = catId,
+            amount = debt.amount,
+            type = txType,
+            dateTimestamp = debt.createdAt,
+            note = txNote
+        )
+        val txId = transactionDao.insertTransaction(tx)
+
+        val finalDebt = debt.copy(
+            contactId = cId,
+            personName = trimmedName,
+            phone = trimmedPhone,
+            transactionId = txId
+        )
         loanDebtDao.insertDebt(finalDebt)
     }
 
     suspend fun recordLoanRepayment(loanId: Long, userId: String, accountId: Long, amount: Double, note: String): Long = withContext(Dispatchers.IO) {
         val debt = loanDebtDao.getDebtById(loanId, userId) ?: return@withContext 0L
-        val repayment = LoanRepayment(userId = userId, loanId = loanId, accountId = accountId, amount = amount, note = note)
+
+        // Repayment transaction creation for account ledger reconciliation:
+        val txType = if (debt.type == DebtType.OWED_TO_ME) TransactionType.INCOME else TransactionType.EXPENSE
+        val catNameBn = if (debt.type == DebtType.OWED_TO_ME) "ধার ফেরত গ্রহণ" else "ধার পরিশোধ"
+        val catNameEn = if (debt.type == DebtType.OWED_TO_ME) "Loan Collection" else "Loan Repayment"
+        val catIcon = if (debt.type == DebtType.OWED_TO_ME) "savings" else "payment"
+        val catColor = if (debt.type == DebtType.OWED_TO_ME) "#0D9488" else "#F97316"
+
+        val catId = getOrCreateCategory(
+            userId = userId,
+            type = txType,
+            nameBn = catNameBn,
+            nameEn = catNameEn,
+            iconName = catIcon,
+            colorHex = catColor
+        )
+
+        val trimmedName = debt.personName.trim()
+        val txNote = when (debt.type) {
+            DebtType.OWED_TO_ME -> "ধার ফেরত গ্রহণ: $trimmedName ${if (note.isNotBlank()) "($note)" else ""}".trim()
+            DebtType.I_OWE -> "ধার পরিশোধ: $trimmedName ${if (note.isNotBlank()) "($note)" else ""}".trim()
+        }
+
+        val now = System.currentTimeMillis()
+        val tx = TransactionRecord(
+            userId = userId,
+            accountId = accountId,
+            categoryId = catId,
+            amount = amount,
+            type = txType,
+            dateTimestamp = now,
+            note = txNote
+        )
+        val txId = transactionDao.insertTransaction(tx)
+
+        val repayment = LoanRepayment(
+            userId = userId,
+            loanId = loanId,
+            accountId = accountId,
+            amount = amount,
+            dateTimestamp = now,
+            note = note,
+            transactionId = txId
+        )
         val repId = loanRepaymentDao.insertRepayment(repayment)
         val newPaid = debt.paidAmount + amount
         val settled = newPaid >= debt.amount
@@ -298,6 +406,18 @@ class HisabRepository(
     }
 
     suspend fun deleteLoanDebt(id: Long, userId: String) = withContext(Dispatchers.IO) {
+        val debt = loanDebtDao.getDebtById(id, userId)
+        if (debt != null) {
+            debt.transactionId?.let { txId ->
+                transactionDao.deleteTransactionById(txId, userId)
+            }
+            val repayments = loanRepaymentDao.getRepaymentsForLoanSync(id)
+            for (rep in repayments) {
+                rep.transactionId?.let { repTxId ->
+                    transactionDao.deleteTransactionById(repTxId, userId)
+                }
+            }
+        }
         loanDebtDao.deleteDebt(id, userId)
     }
 

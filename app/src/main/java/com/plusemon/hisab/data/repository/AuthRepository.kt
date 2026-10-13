@@ -323,6 +323,8 @@ class AuthRepository(
                 Category(userId = userId, nameBn = "শিক্ষা", nameEn = "Education", type = TransactionType.EXPENSE, iconName = "school", colorHex = "#F59E0B", isDefault = true),
                 Category(userId = userId, nameBn = "অন্যান্য খরচ", nameEn = "Other Expense", type = TransactionType.EXPENSE, iconName = "category", colorHex = "#64748B", isDefault = true),
                 Category(userId = userId, nameBn = "দোকান বাকি পরিশোধ", nameEn = "Shop Credit Payment", type = TransactionType.EXPENSE, iconName = "store", colorHex = "#EF4444", isDefault = true),
+                Category(userId = userId, nameBn = "ধার প্রদান", nameEn = "Loan Given", type = TransactionType.EXPENSE, iconName = "payments", colorHex = "#EF4444", isDefault = true),
+                Category(userId = userId, nameBn = "ধার পরিশোধ", nameEn = "Loan Repayment", type = TransactionType.EXPENSE, iconName = "payment", colorHex = "#F97316", isDefault = true),
 
                 // Income Categories
                 Category(userId = userId, nameBn = "বেতন", nameEn = "Salary", type = TransactionType.INCOME, iconName = "payments", colorHex = "#10B981", isDefault = true),
@@ -330,7 +332,9 @@ class AuthRepository(
                 Category(userId = userId, nameBn = "ফ্রিল্যান্সিং", nameEn = "Freelancing", type = TransactionType.INCOME, iconName = "laptop", colorHex = "#7C3AED", isDefault = true),
                 Category(userId = userId, nameBn = "বিনিয়োগ ও লভ্যাংশ", nameEn = "Investments", type = TransactionType.INCOME, iconName = "trending_up", colorHex = "#F59E0B", isDefault = true),
                 Category(userId = userId, nameBn = "উপহার ও অনুদান", nameEn = "Gifts & Grants", type = TransactionType.INCOME, iconName = "card_giftcard", colorHex = "#EC4899", isDefault = true),
-                Category(userId = userId, nameBn = "অন্যান্য আয়", nameEn = "Other Income", type = TransactionType.INCOME, iconName = "attach_money", colorHex = "#0D9488", isDefault = true)
+                Category(userId = userId, nameBn = "অন্যান্য আয়", nameEn = "Other Income", type = TransactionType.INCOME, iconName = "attach_money", colorHex = "#0D9488", isDefault = true),
+                Category(userId = userId, nameBn = "ধার গ্রহণ", nameEn = "Loan Received", type = TransactionType.INCOME, iconName = "account_balance_wallet", colorHex = "#10B981", isDefault = true),
+                Category(userId = userId, nameBn = "ধার ফেরত গ্রহণ", nameEn = "Loan Collection", type = TransactionType.INCOME, iconName = "savings", colorHex = "#0D9488", isDefault = true)
             )
             categoryDao.insertCategories(defaultCategories)
         }

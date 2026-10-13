@@ -68,7 +68,7 @@ class Converters {
         RecurringRule::class,
         UserSettings::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 @TypeConverters(Converters::class)

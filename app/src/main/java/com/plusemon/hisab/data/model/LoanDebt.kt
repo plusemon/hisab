@@ -41,7 +41,8 @@ data class LoanDebt(
     val note: String = "",
     val phone: String = "",
     val isSettled: Boolean = false,
-    val createdAt: Long = System.currentTimeMillis()
+    val createdAt: Long = System.currentTimeMillis(),
+    val transactionId: Long? = null
 ) {
     val remainingAmount: Double
         get() = (amount - paidAmount).coerceAtLeast(0.0)
