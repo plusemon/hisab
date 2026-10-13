@@ -92,13 +92,31 @@ abstract class AppDatabase : RoomDatabase() {
         @Volatile
         private var INSTANCE: AppDatabase? = null
 
+        val MIGRATION_4_5 = object : androidx.room.migration.Migration(4, 5) {
+            override fun migrate(db: androidx.sqlite.db.SupportSQLiteDatabase) {
+                try {
+                    db.execSQL("ALTER TABLE loans_debts ADD COLUMN transactionId INTEGER DEFAULT NULL")
+                } catch (e: Exception) {
+                    // Ignored if column already exists
+                }
+                try {
+                    db.execSQL("ALTER TABLE loan_repayments ADD COLUMN transactionId INTEGER DEFAULT NULL")
+                } catch (e: Exception) {
+                    // Ignored if column already exists
+                }
+            }
+        }
+
         fun getDatabase(context: Context): AppDatabase {
             return INSTANCE ?: synchronized(this) {
                 val instance = Room.databaseBuilder(
                     context.applicationContext,
                     AppDatabase::class.java,
                     "hisab_database.db"
-                ).fallbackToDestructiveMigration(true).build()
+                )
+                .addMigrations(MIGRATION_4_5)
+                .fallbackToDestructiveMigration(true)
+                .build()
                 INSTANCE = instance
                 instance
             }

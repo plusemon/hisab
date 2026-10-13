@@ -53,15 +53,19 @@ class FirestoreRepositoryImpl(
         }
     }
 
-    private suspend fun <T> Task<T>.awaitTask(): T = suspendCancellableCoroutine { continuation ->
-        addOnSuccessListener { result ->
-            if (continuation.isActive) continuation.resume(result)
-        }
-        addOnFailureListener { exception ->
-            if (continuation.isActive) continuation.resumeWithException(exception)
-        }
-        addOnCanceledListener {
-            continuation.cancel()
+    private suspend fun <T> Task<T>.awaitTask(timeoutMs: Long = 6000L): T = withContext(Dispatchers.IO) {
+        kotlinx.coroutines.withTimeout(timeoutMs) {
+            suspendCancellableCoroutine { continuation ->
+                addOnSuccessListener { result ->
+                    if (continuation.isActive) continuation.resume(result)
+                }
+                addOnFailureListener { exception ->
+                    if (continuation.isActive) continuation.resumeWithException(exception)
+                }
+                addOnCanceledListener {
+                    continuation.cancel()
+                }
+            }
         }
     }
 
@@ -238,63 +242,70 @@ class FirestoreRepositoryImpl(
             IllegalStateException("Firebase is not initialized")
         )
         try {
-            // 1. Sync accounts to ensure foreign keys in Room are satisfied
+            // 1. Sync accounts first to ensure foreign keys in Room are satisfied
             syncAccounts(userId, firestore)
 
             // 2. Sync categories to ensure category relationships are intact
             syncCategories(userId, firestore)
 
-            // 3. Fetch remote transactions from Firestore
-            val remoteSnapshot = firestore.collection(COLLECTION_USERS)
-                .document(userId)
-                .collection(COLLECTION_TRANSACTIONS)
-                .get()
-                .awaitTask()
-
-            val remoteMap = mutableMapOf<Long, TransactionRecord>()
-            for (doc in remoteSnapshot.documents) {
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: continue
-                val accountId = doc.getLong("accountId") ?: continue
-                val amount = doc.getDouble("amount") ?: 0.0
-                val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                val type = try {
-                    TransactionType.valueOf(typeStr)
-                } catch (e: Exception) {
-                    TransactionType.EXPENSE
-                }
-                val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                val note = doc.getString("note") ?: ""
-                val fee = doc.getDouble("fee") ?: 0.0
-                val categoryId = doc.getLong("categoryId")
-                val toAccountId = doc.getLong("toAccountId")
-                val receiptUri = doc.getString("receiptUri")
-                val exchangeRate = doc.getDouble("exchangeRate") ?: 1.0
-                val isRecurringInstance = doc.getBoolean("isRecurringInstance") ?: false
-                val recurringRuleId = doc.getLong("recurringRuleId")
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-
-                remoteMap[id] = TransactionRecord(
-                    id = id,
-                    userId = userId,
-                    accountId = accountId,
-                    categoryId = categoryId,
-                    toAccountId = toAccountId,
-                    amount = amount,
-                    fee = fee,
-                    type = type,
-                    dateTimestamp = dateTimestamp,
-                    note = note,
-                    receiptUri = receiptUri,
-                    exchangeRate = exchangeRate,
-                    isRecurringInstance = isRecurringInstance,
-                    recurringRuleId = recurringRuleId,
-                    createdAt = createdAt
-                )
+            // 3. Fetch remote transactions from Firestore with strict timeout
+            val remoteSnapshot = try {
+                firestore.collection(COLLECTION_USERS)
+                    .document(userId)
+                    .collection(COLLECTION_TRANSACTIONS)
+                    .get()
+                    .awaitTask(7000L)
+            } catch (e: Exception) {
+                Log.w(TAG, "Fetching remote transactions timed out or error: ${e.message}")
+                null
             }
 
-            // 4. Upsert remote transactions into local Room DB
-            if (remoteMap.isNotEmpty()) {
-                transactionDao.insertTransactions(remoteMap.values.toList())
+            val remoteMap = mutableMapOf<Long, TransactionRecord>()
+            if (remoteSnapshot != null) {
+                for (doc in remoteSnapshot.documents) {
+                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: continue
+                    val accountId = doc.getLong("accountId") ?: continue
+                    val amount = doc.getDouble("amount") ?: 0.0
+                    val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
+                    val type = try {
+                        TransactionType.valueOf(typeStr)
+                    } catch (e: Exception) {
+                        TransactionType.EXPENSE
+                    }
+                    val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
+                    val note = doc.getString("note") ?: ""
+                    val fee = doc.getDouble("fee") ?: 0.0
+                    val categoryId = doc.getLong("categoryId")
+                    val toAccountId = doc.getLong("toAccountId")
+                    val receiptUri = doc.getString("receiptUri")
+                    val exchangeRate = doc.getDouble("exchangeRate") ?: 1.0
+                    val isRecurringInstance = doc.getBoolean("isRecurringInstance") ?: false
+                    val recurringRuleId = doc.getLong("recurringRuleId")
+                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+
+                    remoteMap[id] = TransactionRecord(
+                        id = id,
+                        userId = userId,
+                        accountId = accountId,
+                        categoryId = categoryId,
+                        toAccountId = toAccountId,
+                        amount = amount,
+                        fee = fee,
+                        type = type,
+                        dateTimestamp = dateTimestamp,
+                        note = note,
+                        receiptUri = receiptUri,
+                        exchangeRate = exchangeRate,
+                        isRecurringInstance = isRecurringInstance,
+                        recurringRuleId = recurringRuleId,
+                        createdAt = createdAt
+                    )
+                }
+
+                // 4. Upsert remote transactions into local Room DB immediately
+                if (remoteMap.isNotEmpty()) {
+                    transactionDao.insertTransactions(remoteMap.values.toList())
+                }
             }
 
             // 5. Check if local Room DB has transactions not yet uploaded to Firestore
@@ -302,8 +313,12 @@ class FirestoreRepositoryImpl(
             var uploadedCount = 0
             for (localTx in localTransactions) {
                 if (!remoteMap.containsKey(localTx.id)) {
-                    saveTransaction(userId, localTx)
-                    uploadedCount++
+                    try {
+                        saveTransaction(userId, localTx)
+                        uploadedCount++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed uploading tx ${localTx.id}: ${e.message}")
+                    }
                 }
             }
 
@@ -321,8 +336,14 @@ class FirestoreRepositoryImpl(
                 .document(userId)
                 .collection(COLLECTION_ACCOUNTS)
 
-            val remoteAccSnapshot = accountsCollection.get().awaitTask()
-            val remoteAccounts = remoteAccSnapshot.documents.mapNotNull { doc ->
+            val remoteAccSnapshot = try {
+                accountsCollection.get().awaitTask(5000L)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed fetching remote accounts: ${e.message}")
+                null
+            }
+
+            val remoteAccounts = remoteAccSnapshot?.documents?.mapNotNull { doc ->
                 val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
                 val name = doc.getString("name") ?: "Account"
                 val typeStr = doc.getString("type") ?: AccountType.CASH.name
@@ -346,31 +367,35 @@ class FirestoreRepositoryImpl(
                     isArchived = isArchived,
                     createdAt = createdAt
                 )
-            }
+            } ?: emptyList()
 
             if (remoteAccounts.isNotEmpty()) {
                 accountDao.insertAccounts(remoteAccounts)
             }
 
-            // Upload any local accounts to Firestore
+            // Upload any local accounts to Firestore safely
             val localAccounts = accountDao.getAllAccountsList(userId)
             val remoteIds = remoteAccounts.map { it.id }.toSet()
             for (acc in localAccounts) {
                 if (!remoteIds.contains(acc.id)) {
-                    val accData = hashMapOf(
-                        "id" to acc.id,
-                        "userId" to userId,
-                        "name" to acc.name,
-                        "type" to acc.type.name,
-                        "currencyCode" to acc.currencyCode,
-                        "startingBalance" to acc.startingBalance,
-                        "colorHex" to acc.colorHex,
-                        "iconName" to acc.iconName,
-                        "isArchived" to acc.isArchived,
-                        "createdAt" to acc.createdAt,
-                        "updatedAt" to System.currentTimeMillis()
-                    )
-                    accountsCollection.document(acc.id.toString()).set(accData, SetOptions.merge()).awaitTask()
+                    try {
+                        val accData = hashMapOf(
+                            "id" to acc.id,
+                            "userId" to userId,
+                            "name" to acc.name,
+                            "type" to acc.type.name,
+                            "currencyCode" to acc.currencyCode,
+                            "startingBalance" to acc.startingBalance,
+                            "colorHex" to acc.colorHex,
+                            "iconName" to acc.iconName,
+                            "isArchived" to acc.isArchived,
+                            "createdAt" to acc.createdAt,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        accountsCollection.document(acc.id.toString()).set(accData, SetOptions.merge()).awaitTask(3000L)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed uploading local account ${acc.id}: ${e.message}")
+                    }
                 }
             }
         } catch (e: Exception) {
@@ -384,8 +409,14 @@ class FirestoreRepositoryImpl(
                 .document(userId)
                 .collection(COLLECTION_CATEGORIES)
 
-            val remoteCatSnapshot = catCollection.get().awaitTask()
-            val remoteCats = remoteCatSnapshot.documents.mapNotNull { doc ->
+            val remoteCatSnapshot = try {
+                catCollection.get().awaitTask(5000L)
+            } catch (e: Exception) {
+                Log.w(TAG, "Failed fetching remote categories: ${e.message}")
+                null
+            }
+
+            val remoteCats = remoteCatSnapshot?.documents?.mapNotNull { doc ->
                 val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
                 val nameBn = doc.getString("nameBn") ?: ""
                 val nameEn = doc.getString("nameEn") ?: ""
@@ -407,30 +438,34 @@ class FirestoreRepositoryImpl(
                     isDefault = isDefault,
                     isArchived = isArchived
                 )
-            }
+            } ?: emptyList()
 
             if (remoteCats.isNotEmpty()) {
                 categoryDao.insertCategories(remoteCats)
             }
 
-            // Upload any local categories to Firestore
+            // Upload any local categories to Firestore safely
             val localCats = categoryDao.getAllCategoriesList(userId)
             val remoteCatIds = remoteCats.map { it.id }.toSet()
             for (cat in localCats) {
                 if (!remoteCatIds.contains(cat.id)) {
-                    val catData = hashMapOf(
-                        "id" to cat.id,
-                        "userId" to userId,
-                        "nameBn" to cat.nameBn,
-                        "nameEn" to cat.nameEn,
-                        "type" to cat.type.name,
-                        "iconName" to cat.iconName,
-                        "colorHex" to cat.colorHex,
-                        "isDefault" to cat.isDefault,
-                        "isArchived" to cat.isArchived,
-                        "updatedAt" to System.currentTimeMillis()
-                    )
-                    catCollection.document(cat.id.toString()).set(catData, SetOptions.merge()).awaitTask()
+                    try {
+                        val catData = hashMapOf(
+                            "id" to cat.id,
+                            "userId" to userId,
+                            "nameBn" to cat.nameBn,
+                            "nameEn" to cat.nameEn,
+                            "type" to cat.type.name,
+                            "iconName" to cat.iconName,
+                            "colorHex" to cat.colorHex,
+                            "isDefault" to cat.isDefault,
+                            "isArchived" to cat.isArchived,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        catCollection.document(cat.id.toString()).set(catData, SetOptions.merge()).awaitTask(3000L)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Failed uploading local category ${cat.id}: ${e.message}")
+                    }
                 }
             }
         } catch (e: Exception) {

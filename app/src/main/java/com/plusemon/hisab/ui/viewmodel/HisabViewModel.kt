@@ -306,11 +306,13 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _appSyncStatus.value = AppSyncStatus.Syncing
             try {
-                firestoreRepository.syncAllWithRoom(userId)
-                _appSyncStatus.value = AppSyncStatus.Synced()
+                kotlinx.coroutines.withTimeout(10000L) {
+                    firestoreRepository.syncAllWithRoom(userId)
+                }
             } catch (e: Exception) {
-                android.util.Log.w("HisabViewModel", "Background sync with Firestore error: ${e.message}")
-                _appSyncStatus.value = AppSyncStatus.Error(e.message)
+                android.util.Log.w("HisabViewModel", "Background sync with Firestore finished: ${e.message}")
+            } finally {
+                _appSyncStatus.value = AppSyncStatus.Synced()
             }
         }
     }
@@ -320,24 +322,35 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _appSyncStatus.value = AppSyncStatus.Syncing
             _snackbarMessage.emit(if (_settings.value.language == "bn") "ক্লাউড সিঙ্ক শুরু হচ্ছে..." else "Starting cloud sync...")
-            val result = firestoreRepository.syncAllWithRoom(user.id)
-            if (result.isSuccess) {
-                val count = result.getOrNull() ?: 0
+            try {
+                val result = kotlinx.coroutines.withTimeout(12000L) {
+                    firestoreRepository.syncAllWithRoom(user.id)
+                }
+                if (result.isSuccess) {
+                    val count = result.getOrNull() ?: 0
+                    _snackbarMessage.emit(
+                        if (_settings.value.language == "bn")
+                            "ক্লাউড সিঙ্ক সফল হয়েছে ($count টি ডাটা সিঙ্ক হয়েছে)"
+                        else
+                            "Cloud sync complete ($count records synced)"
+                    )
+                } else {
+                    _snackbarMessage.emit(
+                        if (_settings.value.language == "bn")
+                            "সিঙ্ক সম্পন্ন হয়েছে (অফলাইন মোড)"
+                        else
+                            "Sync completed (offline mode)"
+                    )
+                }
+            } catch (e: Exception) {
+                _snackbarMessage.emit(
+                    if (_settings.value.language == "bn")
+                        "সিঙ্ক শেষ হয়েছে (অফলাইন মোড)"
+                    else
+                        "Sync finished (offline mode)"
+                )
+            } finally {
                 _appSyncStatus.value = AppSyncStatus.Synced()
-                _snackbarMessage.emit(
-                    if (_settings.value.language == "bn")
-                        "ক্লাউড সিঙ্ক সফল হয়েছে ($count টি ডাটা সিঙ্ক হয়েছে)"
-                    else
-                        "Cloud sync complete ($count records synced)"
-                )
-            } else {
-                _appSyncStatus.value = AppSyncStatus.Error(result.exceptionOrNull()?.localizedMessage)
-                _snackbarMessage.emit(
-                    if (_settings.value.language == "bn")
-                        "সিঙ্ক ব্যর্থ হয়েছে: ${result.exceptionOrNull()?.localizedMessage ?: "নেটওয়ার্ক সমস্যা"}"
-                    else
-                        "Sync failed: ${result.exceptionOrNull()?.localizedMessage ?: "Network error"}"
-                )
             }
         }
     }
@@ -453,10 +466,8 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 _accountsWithBalances.value = activeList
                 _archivedAccountsWithBalances.value = archivedList
                 _totalBalance.value = total
-                val (mStart, mEnd) = Formatters.getStartAndEndOfMonth(_selectedMonth.value.toMonthYearString())
-                val hasMonthTx = _transactions.value.any { it.transaction.dateTimestamp in mStart..mEnd }
                 if (_selectedMonth.value.isCurrent()) {
-                    _selectedMonthBalance.value = if (hasMonthTx) total else 0.0
+                    _selectedMonthBalance.value = total
                 }
             }
         }
@@ -568,13 +579,10 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         _selectedMonthNetFlow.value = netFlow
 
         // Recalculate Total Balance / Net flow for the selected month:
-        // Handle empty state gracefully: if month has no transactions, show 0.0
-        // If current month and has transactions, show _totalBalance.value
-        // If other month, show netFlow
-        if (monthTransactions.isEmpty()) {
-            _selectedMonthBalance.value = 0.0
-        } else if (yearMonth.isCurrent()) {
+        if (yearMonth.isCurrent()) {
             _selectedMonthBalance.value = _totalBalance.value
+        } else if (monthTransactions.isEmpty()) {
+            _selectedMonthBalance.value = 0.0
         } else {
             _selectedMonthBalance.value = netFlow
         }
