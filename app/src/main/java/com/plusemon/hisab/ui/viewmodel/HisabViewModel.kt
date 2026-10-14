@@ -1704,7 +1704,50 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 android.util.Log.w("HisabViewModel", "Firestore save recurring rule error: ${e.message}")
             }
             markSaved()
-            _snackbarMessage.emit("স্বয়ংক্রিয় লেনদেন রুল যুক্ত করা হয়েছে")
+            _snackbarMessage.emit(if (settings.value.language == "bn") "স্বয়ংক্রিয় লেনদেন রুল যুক্ত করা হয়েছে" else "Recurring rule added")
+        }
+    }
+
+    fun updateRecurringRule(
+        id: Long,
+        accountId: Long,
+        categoryId: Long?,
+        amount: Double,
+        type: TransactionType,
+        frequency: Frequency,
+        note: String
+    ) {
+        val user = currentUser.value ?: return
+        viewModelScope.launch {
+            markSaving()
+            val existing = db.recurringDao().getAllRulesList(user.id).find { it.id == id }
+            val updated = (existing ?: RecurringRule(
+                id = id,
+                userId = user.id,
+                accountId = accountId,
+                categoryId = categoryId,
+                amount = amount,
+                type = type,
+                frequency = frequency,
+                startDate = System.currentTimeMillis(),
+                endDate = null,
+                note = note
+            )).copy(
+                accountId = accountId,
+                categoryId = categoryId,
+                amount = amount,
+                type = type,
+                frequency = frequency,
+                note = note
+            )
+            hisabRepository.updateRecurringRule(updated)
+            try {
+                firestoreRepository.saveRecurringRule(user.id, updated)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore update recurring rule error: ${e.message}")
+            }
+            markSaved()
+            _snackbarMessage.emit(if (settings.value.language == "bn") "স্বয়ংক্রিয় লেনদেনের নিয়ম আপডেট করা হয়েছে" else "Recurring rule updated")
         }
     }
 

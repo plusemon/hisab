@@ -533,6 +533,10 @@ class HisabRepository(
         recurringDao.insertRule(rule)
     }
 
+    suspend fun updateRecurringRule(rule: RecurringRule) = withContext(Dispatchers.IO) {
+        recurringDao.updateRule(rule)
+    }
+
     suspend fun setRecurringPaused(id: Long, userId: String, isPaused: Boolean) = withContext(Dispatchers.IO) {
         recurringDao.setPaused(id, userId, isPaused)
     }

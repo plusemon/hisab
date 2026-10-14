@@ -14,31 +14,37 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Tab
@@ -47,6 +53,7 @@ import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -108,24 +115,25 @@ fun ManageCategoriesScreen(
             DetailTopAppBar(
                 title = if (isBn) "ক্যাটাগরি ব্যবস্থাপনা" else "Manage Categories",
                 onNavigateBack = onNavigateBack,
-                isNetworkConnected = isNetworkConnected
+                isNetworkConnected = isNetworkConnected,
+                actions = {
+                    IconButton(
+                        onClick = {
+                            categoryToEdit = null
+                            showAddEditDialog = true
+                        },
+                        modifier = Modifier
+                            .size(40.dp)
+                            .testTag("topbar_add_category_btn")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Add,
+                            contentDescription = if (isBn) "নতুন ক্যাটাগরি" else "Add Category",
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                }
             )
-        },
-        floatingActionButton = {
-            FloatingActionButton(
-                onClick = {
-                    categoryToEdit = null
-                    showAddEditDialog = true
-                },
-                containerColor = MaterialTheme.colorScheme.primary,
-                contentColor = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.testTag("add_category_fab")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Add,
-                    contentDescription = if (isBn) "নতুন ক্যাটাগরি" else "Add Category"
-                )
-            }
         }
     ) { innerPadding ->
         Column(
@@ -224,9 +232,9 @@ fun ManageCategoriesScreen(
         }
     }
 
-    // Add / Edit Dialog
+    // Add / Edit Bottom Sheet
     if (showAddEditDialog) {
-        CategoryEditDialog(
+        CategoryEditBottomSheet(
             category = categoryToEdit,
             defaultType = currentType,
             isBangla = isBn,
@@ -357,14 +365,17 @@ private fun CategoryListItem(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun CategoryEditDialog(
+private fun CategoryEditBottomSheet(
     category: Category?,
     defaultType: TransactionType,
     isBangla: Boolean,
     onDismiss: () -> Unit,
     onSave: (nameBn: String, nameEn: String, type: TransactionType, iconName: String, colorHex: String) -> Unit
 ) {
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
+
     var nameBn by remember { mutableStateOf(category?.nameBn ?: "") }
     var nameEn by remember { mutableStateOf(category?.nameEn ?: "") }
     var selectedIcon by remember { mutableStateOf(category?.iconName ?: "shopping_cart") }
@@ -386,146 +397,193 @@ private fun CategoryEditDialog(
     val isEditing = category != null
     val targetType = category?.type ?: defaultType
 
-    AlertDialog(
+    ModalBottomSheet(
         onDismissRequest = onDismiss,
-        shape = RoundedCornerShape(20.dp),
-        title = {
-            Text(
-                text = if (isEditing) {
-                    if (isBangla) "ক্যাটাগরি সম্পাদনা" else "Edit Category"
-                } else {
-                    if (isBangla) "নতুন ক্যাটাগরি তৈরি" else "New Category"
-                },
-                fontWeight = FontWeight.Bold
-            )
-        },
-        text = {
-            Column(
+        sheetState = sheetState,
+        dragHandle = { BottomSheetDefaults.DragHandle() },
+        shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
+        containerColor = MaterialTheme.colorScheme.surface,
+        modifier = Modifier.imePadding()
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 6.dp)
+        ) {
+            Row(
                 modifier = Modifier.fillMaxWidth(),
-                verticalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                // Name EN
-                OutlinedTextField(
-                    value = nameEn,
-                    onValueChange = { nameEn = it },
-                    label = { Text(if (isBangla) "ইংরেজি নাম (যেমন: Groceries)" else "English Name") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("category_name_en_input")
-                )
-
-                // Name BN
-                OutlinedTextField(
-                    value = nameBn,
-                    onValueChange = { nameBn = it },
-                    label = { Text(if (isBangla) "বাংলা নাম (যেমন: কাঁচাবাজার)" else "Bangla Name") },
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("category_name_bn_input")
-                )
-
-                // Color Selector
                 Text(
-                    text = if (isBangla) "রং নির্বাচন করুন" else "Select Color",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
+                    text = if (isEditing) {
+                        if (isBangla) "ক্যাটাগরি সম্পাদনা" else "Edit Category"
+                    } else {
+                        if (isBangla) "নতুন ক্যাটাগরি তৈরি" else "New Category"
+                    },
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
                 )
-
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(start = 0.dp, top = 4.dp, end = 16.dp, bottom = 4.dp)
+                IconButton(
+                    onClick = onDismiss,
+                    modifier = Modifier.size(36.dp)
                 ) {
-                    items(colorsList) { hex ->
-                        val isSelected = selectedColor.equals(hex, ignoreCase = true)
-                        Box(
-                            modifier = Modifier
-                                .size(34.dp)
-                                .clip(CircleShape)
-                                .background(parseColorHex(hex))
-                                .clickable { selectedColor = hex }
-                                .border(
-                                    width = if (isSelected) 3.dp else 1.dp,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
-                                    shape = CircleShape
-                                ),
-                            contentAlignment = Alignment.Center
-                        ) {
-                            if (isSelected) {
-                                Icon(
-                                    imageVector = Icons.Default.Check,
-                                    contentDescription = null,
-                                    tint = Color.White,
-                                    modifier = Modifier.size(18.dp)
-                                )
-                            }
-                        }
-                    }
+                    Icon(
+                        imageVector = Icons.Default.Close,
+                        contentDescription = "Close",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
                 }
+            }
 
-                // Icon Selector
-                Text(
-                    text = if (isBangla) "আইকন নির্বাচন করুন" else "Select Icon",
-                    style = MaterialTheme.typography.labelMedium,
-                    fontWeight = FontWeight.SemiBold
-                )
+            Spacer(modifier = Modifier.height(14.dp))
 
-                LazyRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    contentPadding = PaddingValues(start = 0.dp, top = 4.dp, end = 16.dp, bottom = 4.dp)
-                ) {
-                    items(iconsList) { iconKey ->
-                        val isSelected = selectedIcon.equals(iconKey, ignoreCase = true)
-                        Box(
-                            modifier = Modifier
-                                .size(40.dp)
-                                .clip(RoundedCornerShape(10.dp))
-                                .background(
-                                    if (isSelected) parseColorHex(selectedColor).copy(alpha = 0.2f)
-                                    else MaterialTheme.colorScheme.surfaceVariant
-                                )
-                                .border(
-                                    width = if (isSelected) 2.dp else 0.dp,
-                                    color = if (isSelected) parseColorHex(selectedColor) else Color.Transparent,
-                                    shape = RoundedCornerShape(10.dp)
-                                )
-                                .clickable { selectedIcon = iconKey },
-                            contentAlignment = Alignment.Center
-                        ) {
+            // Name EN
+            OutlinedTextField(
+                value = nameEn,
+                onValueChange = { nameEn = it },
+                label = { Text(if (isBangla) "ইংরেজি নাম (যেমন: Groceries)" else "English Name") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("category_name_en_input")
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Name BN
+            OutlinedTextField(
+                value = nameBn,
+                onValueChange = { nameBn = it },
+                label = { Text(if (isBangla) "বাংলা নাম (যেমন: কাঁচাবাজার)" else "Bangla Name") },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("category_name_bn_input")
+            )
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Color Selector
+            Text(
+                text = if (isBangla) "রং নির্বাচন করুন" else "Select Color",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(top = 6.dp, end = 16.dp, bottom = 4.dp)
+            ) {
+                items(colorsList) { hex ->
+                    val isSelected = selectedColor.equals(hex, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(parseColorHex(hex))
+                            .clickable { selectedColor = hex }
+                            .border(
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Transparent,
+                                shape = CircleShape
+                            ),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
                             Icon(
-                                imageVector = getIconByName(iconKey),
-                                contentDescription = iconKey,
-                                tint = if (isSelected) parseColorHex(selectedColor) else MaterialTheme.colorScheme.onSurfaceVariant,
-                                modifier = Modifier.size(20.dp)
+                                imageVector = Icons.Default.Check,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(18.dp)
                             )
                         }
                     }
                 }
             }
-        },
-        confirmButton = {
-            Button(
-                onClick = {
-                    val finalEn = nameEn.trim().ifEmpty { nameBn.trim() }
-                    val finalBn = nameBn.trim().ifEmpty { nameEn.trim() }
-                    if (finalEn.isNotBlank()) {
-                        onSave(finalBn, finalEn, targetType, selectedIcon, selectedColor)
-                    }
-                },
-                enabled = nameEn.isNotBlank() || nameBn.isNotBlank(),
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.testTag("save_category_button")
+
+            Spacer(modifier = Modifier.height(14.dp))
+
+            // Icon Selector
+            Text(
+                text = if (isBangla) "আইকন নির্বাচন করুন" else "Select Icon",
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+
+            LazyRow(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                contentPadding = PaddingValues(top = 6.dp, end = 16.dp, bottom = 4.dp)
             ) {
-                Text(if (isBangla) "সংরক্ষণ" else "Save")
+                items(iconsList) { iconKey ->
+                    val isSelected = selectedIcon.equals(iconKey, ignoreCase = true)
+                    Box(
+                        modifier = Modifier
+                            .size(40.dp)
+                            .clip(RoundedCornerShape(10.dp))
+                            .background(
+                                if (isSelected) parseColorHex(selectedColor).copy(alpha = 0.2f)
+                                else MaterialTheme.colorScheme.surfaceVariant
+                            )
+                            .border(
+                                width = if (isSelected) 2.dp else 0.dp,
+                                color = if (isSelected) parseColorHex(selectedColor) else Color.Transparent,
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            .clickable { selectedIcon = iconKey },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = getIconByName(iconKey),
+                            contentDescription = iconKey,
+                            tint = if (isSelected) parseColorHex(selectedColor) else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
             }
-        },
-        dismissButton = {
-            TextButton(onClick = onDismiss) {
-                Text(if (isBangla) "বাতিল" else "Cancel")
+
+            Spacer(modifier = Modifier.height(20.dp))
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = onDismiss,
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(if (isBangla) "বাতিল" else "Cancel")
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                val isValid = nameEn.isNotBlank() || nameBn.isNotBlank()
+                Button(
+                    onClick = {
+                        val finalEn = nameEn.trim().ifEmpty { nameBn.trim() }
+                        val finalBn = nameBn.trim().ifEmpty { nameEn.trim() }
+                        if (finalEn.isNotBlank()) {
+                            onSave(finalBn, finalEn, targetType, selectedIcon, selectedColor)
+                        }
+                    },
+                    enabled = isValid,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.testTag("save_category_button")
+                ) {
+                    Text(if (isBangla) "সংরক্ষণ" else "Save", fontWeight = FontWeight.Bold)
+                }
             }
+
+            Spacer(modifier = Modifier.height(10.dp))
         }
-    )
+    }
 }
