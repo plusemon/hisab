@@ -28,10 +28,10 @@ interface AccountDao {
     @Query("SELECT * FROM accounts WHERE userId = :userId AND isArchived = 0 LIMIT 1")
     suspend fun getFirstActiveAccount(userId: String): UserAccount?
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAccount(account: UserAccount): Long
 
-    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertAccounts(accounts: List<UserAccount>)
 
     @Update

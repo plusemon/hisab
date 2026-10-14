@@ -31,6 +31,12 @@ interface ShopCreditPurchaseDao {
     @Query("UPDATE shop_credit_purchases SET paidAmount = :paidAmount, isSettled = :isSettled WHERE id = :id")
     suspend fun updatePaidAmount(id: Long, paidAmount: Double, isSettled: Boolean)
 
+    @Query("SELECT * FROM shop_credit_purchases WHERE userId = :userId")
+    suspend fun getAllPurchasesList(userId: String): List<ShopCreditPurchase>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPurchases(purchases: List<ShopCreditPurchase>)
+
     @Query("DELETE FROM shop_credit_purchases WHERE id = :id AND userId = :userId")
     suspend fun deletePurchase(id: Long, userId: String)
 

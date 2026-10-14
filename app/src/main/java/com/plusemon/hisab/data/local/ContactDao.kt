@@ -25,6 +25,12 @@ interface ContactDao {
     @Update
     suspend fun updateContact(contact: Contact)
 
+    @Query("SELECT * FROM contacts WHERE userId = :userId")
+    suspend fun getAllContactsList(userId: String): List<Contact>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertContacts(contacts: List<Contact>)
+
     @Query("DELETE FROM contacts WHERE id = :id AND userId = :userId")
     suspend fun deleteContact(id: Long, userId: String)
 

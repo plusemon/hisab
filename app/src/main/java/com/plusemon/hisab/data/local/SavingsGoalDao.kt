@@ -25,6 +25,12 @@ interface SavingsGoalDao {
     @Query("UPDATE savings_goals SET currentSavedAmount = :amount, isCompleted = :isCompleted WHERE id = :id AND userId = :userId")
     suspend fun updateSavedAmount(id: Long, userId: String, amount: Double, isCompleted: Boolean)
 
+    @Query("SELECT * FROM savings_goals WHERE userId = :userId")
+    suspend fun getAllGoalsList(userId: String): List<SavingsGoal>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertGoals(goals: List<SavingsGoal>)
+
     @Query("DELETE FROM savings_goals WHERE id = :id AND userId = :userId")
     suspend fun deleteGoal(id: Long, userId: String)
 

@@ -1,0 +1,246 @@
+{
+  "entities": {
+    "UserProfile": {
+      "collection": "users",
+      "isSubcollection": false,
+      "documentId": "{userId}",
+      "fields": {
+        "uid": { "type": "string", "required": false },
+        "email": { "type": "string", "required": false },
+        "displayName": { "type": "string", "required": false },
+        "photoUrl": { "type": "string", "required": false },
+        "isGoogleUser": { "type": "boolean", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "UserSettings": {
+      "collection": "users/{userId}/settings",
+      "isSubcollection": true,
+      "documentId": "preferences",
+      "fields": {
+        "userId": { "type": "string", "required": false },
+        "language": { "type": "string", "required": false },
+        "numeralSystem": { "type": "string", "required": false },
+        "defaultCurrency": { "type": "string", "required": false },
+        "currencySymbol": { "type": "string", "required": false },
+        "hideBalances": { "type": "boolean", "required": false },
+        "pinEnabled": { "type": "boolean", "required": false },
+        "pinCode": { "type": "string", "required": false },
+        "dailyReminderEnabled": { "type": "boolean", "required": false },
+        "isDarkMode": { "type": "boolean", "required": false },
+        "useSystemTheme": { "type": "boolean", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "UserAccount": {
+      "collection": "users/{userId}/accounts",
+      "isSubcollection": true,
+      "documentId": "{accountId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "type": { "type": "string", "required": true },
+        "currencyCode": { "type": "string", "required": false },
+        "startingBalance": { "type": "number", "required": false },
+        "colorHex": { "type": "string", "required": false },
+        "iconName": { "type": "string", "required": false },
+        "isArchived": { "type": "boolean", "required": false },
+        "createdAt": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "Category": {
+      "collection": "users/{userId}/categories",
+      "isSubcollection": true,
+      "documentId": "{categoryId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "nameBn": { "type": "string", "required": false },
+        "nameEn": { "type": "string", "required": false },
+        "type": { "type": "string", "required": true },
+        "iconName": { "type": "string", "required": false },
+        "colorHex": { "type": "string", "required": false },
+        "isDefault": { "type": "boolean", "required": false },
+        "isArchived": { "type": "boolean", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "TransactionRecord": {
+      "collection": "users/{userId}/transactions",
+      "isSubcollection": true,
+      "documentId": "{transactionId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "accountId": { "type": "number", "required": true },
+        "categoryId": { "type": "number", "required": false },
+        "toAccountId": { "type": "number", "required": false },
+        "amount": { "type": "number", "required": true },
+        "fee": { "type": "number", "required": false },
+        "type": { "type": "string", "required": true },
+        "dateTimestamp": { "type": "number", "required": true },
+        "note": { "type": "string", "required": false },
+        "receiptUri": { "type": "string", "required": false },
+        "exchangeRate": { "type": "number", "required": false },
+        "isRecurringInstance": { "type": "boolean", "required": false },
+        "recurringRuleId": { "type": "number", "required": false },
+        "createdAt": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "Budget": {
+      "collection": "users/{userId}/budgets",
+      "isSubcollection": true,
+      "documentId": "{budgetId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "categoryId": { "type": "number", "required": false },
+        "monthYear": { "type": "string", "required": true },
+        "limitAmount": { "type": "number", "required": true },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "SavingsGoal": {
+      "collection": "users/{userId}/savings_goals",
+      "isSubcollection": true,
+      "documentId": "{goalId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "targetAmount": { "type": "number", "required": true },
+        "currentSavedAmount": { "type": "number", "required": false },
+        "targetDate": { "type": "number", "required": false },
+        "note": { "type": "string", "required": false },
+        "colorHex": { "type": "string", "required": false },
+        "iconName": { "type": "string", "required": false },
+        "isCompleted": { "type": "boolean", "required": false },
+        "createdAt": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "Contact": {
+      "collection": "users/{userId}/contacts",
+      "isSubcollection": true,
+      "documentId": "{contactId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "phone": { "type": "string", "required": false },
+        "createdAt": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "LoanDebt": {
+      "collection": "users/{userId}/loans_debts",
+      "isSubcollection": true,
+      "documentId": "{debtId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "contactId": { "type": "number", "required": false },
+        "personName": { "type": "string", "required": true },
+        "accountId": { "type": "number", "required": true },
+        "amount": { "type": "number", "required": true },
+        "paidAmount": { "type": "number", "required": false },
+        "type": { "type": "string", "required": true },
+        "dueDate": { "type": "number", "required": false },
+        "note": { "type": "string", "required": false },
+        "phone": { "type": "string", "required": false },
+        "isSettled": { "type": "boolean", "required": false },
+        "createdAt": { "type": "number", "required": false },
+        "transactionId": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "LoanRepayment": {
+      "collection": "users/{userId}/loan_repayments",
+      "isSubcollection": true,
+      "documentId": "{repaymentId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "loanId": { "type": "number", "required": true },
+        "accountId": { "type": "number", "required": true },
+        "amount": { "type": "number", "required": true },
+        "dateTimestamp": { "type": "number", "required": true },
+        "note": { "type": "string", "required": false },
+        "transactionId": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "Vendor": {
+      "collection": "users/{userId}/vendors",
+      "isSubcollection": true,
+      "documentId": "{vendorId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "name": { "type": "string", "required": true },
+        "phone": { "type": "string", "required": false },
+        "locationNote": { "type": "string", "required": false },
+        "categoryTag": { "type": "string", "required": false },
+        "isArchived": { "type": "boolean", "required": false },
+        "createdAt": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "ShopCreditPurchase": {
+      "collection": "users/{userId}/shop_credit_purchases",
+      "isSubcollection": true,
+      "documentId": "{purchaseId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "vendorId": { "type": "number", "required": true },
+        "amount": { "type": "number", "required": true },
+        "paidAmount": { "type": "number", "required": false },
+        "dateTimestamp": { "type": "number", "required": false },
+        "dueDate": { "type": "number", "required": false },
+        "note": { "type": "string", "required": false },
+        "isSettled": { "type": "boolean", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "ShopCreditPayment": {
+      "collection": "users/{userId}/shop_credit_payments",
+      "isSubcollection": true,
+      "documentId": "{paymentId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "vendorId": { "type": "number", "required": true },
+        "accountId": { "type": "number", "required": true },
+        "amount": { "type": "number", "required": true },
+        "dateTimestamp": { "type": "number", "required": true },
+        "note": { "type": "string", "required": false },
+        "transactionId": { "type": "number", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    },
+    "RecurringRule": {
+      "collection": "users/{userId}/recurring_rules",
+      "isSubcollection": true,
+      "documentId": "{ruleId}",
+      "fields": {
+        "id": { "type": "number", "required": true },
+        "userId": { "type": "string", "required": true },
+        "accountId": { "type": "number", "required": true },
+        "categoryId": { "type": "number", "required": false },
+        "amount": { "type": "number", "required": true },
+        "type": { "type": "string", "required": true },
+        "frequency": { "type": "string", "required": true },
+        "startDate": { "type": "number", "required": true },
+        "endDate": { "type": "number", "required": false },
+        "lastGeneratedDate": { "type": "number", "required": false },
+        "isPaused": { "type": "boolean", "required": false },
+        "note": { "type": "string", "required": false },
+        "updatedAt": { "type": "number", "required": false }
+      }
+    }
+  }
+}

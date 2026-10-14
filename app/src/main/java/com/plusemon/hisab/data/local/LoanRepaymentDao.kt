@@ -21,6 +21,12 @@ interface LoanRepaymentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertRepayment(repayment: LoanRepayment): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRepayments(repayments: List<LoanRepayment>)
+
+    @Query("SELECT * FROM loan_repayments WHERE userId = :userId")
+    suspend fun getAllRepaymentsList(userId: String): List<LoanRepayment>
+
     @Query("DELETE FROM loan_repayments WHERE id = :id")
     suspend fun deleteRepayment(id: Long)
 

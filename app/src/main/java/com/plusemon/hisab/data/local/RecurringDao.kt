@@ -28,6 +28,12 @@ interface RecurringDao {
     @Query("UPDATE recurring_rules SET lastGeneratedDate = :lastGenerated WHERE id = :id AND userId = :userId")
     suspend fun updateLastGenerated(id: Long, userId: String, lastGenerated: Long)
 
+    @Query("SELECT * FROM recurring_rules WHERE userId = :userId")
+    suspend fun getAllRulesList(userId: String): List<RecurringRule>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertRules(rules: List<RecurringRule>)
+
     @Query("DELETE FROM recurring_rules WHERE id = :id AND userId = :userId")
     suspend fun deleteRule(id: Long, userId: String)
 

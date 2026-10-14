@@ -33,7 +33,8 @@ sealed class AuthResult {
 
 class AuthRepository(
     private val context: Context,
-    private val db: AppDatabase
+    private val db: AppDatabase,
+    private val firestoreRepository: FirestoreRepository? = null
 ) {
     private val prefs: SharedPreferences =
         context.getSharedPreferences("hisab_auth_prefs", Context.MODE_PRIVATE)
@@ -264,9 +265,29 @@ class AuthRepository(
     }
 
     suspend fun ensureUserDataSeeded(userId: String) = withContext(Dispatchers.IO) {
-        // 1. Seed Accounts if none exist
         val accCount = accountDao.getAccountCount(userId)
         if (accCount == 0) {
+            // Check if remote cloud data exists first!
+            var hasRestoredCloudData = false
+            if (firestoreRepository != null) {
+                try {
+                    val restoreResult = firestoreRepository.restoreCloudUserData(userId)
+                    if (restoreResult.isSuccess && restoreResult.getOrNull() == true) {
+                        hasRestoredCloudData = true
+                        Log.i("AuthRepository", "Remote cloud data cleanly restored for user $userId")
+                    }
+                } catch (e: Exception) {
+                    Log.w("AuthRepository", "Cloud restore attempt during seed check: ${e.message}")
+                }
+            }
+
+            // If remote data was found and restored, we don't inject default starter accounts/categories
+            if (hasRestoredCloudData || accountDao.getAccountCount(userId) > 0) {
+                return@withContext
+            }
+
+            // Genuinely brand new user with no existing cloud or local records:
+            // 1. Seed Accounts
             val defaultAccounts = listOf(
                 UserAccount(
                     userId = userId,
@@ -306,6 +327,14 @@ class AuthRepository(
                 )
             )
             accountDao.insertAccounts(defaultAccounts)
+
+            // Upload starter accounts to cloud
+            firestoreRepository?.let { repo ->
+                val insertedAccounts = accountDao.getAllAccountsList(userId)
+                for (acc in insertedAccounts) {
+                    try { repo.saveAccount(userId, acc) } catch (e: Exception) {}
+                }
+            }
         }
 
         // 2. Seed Expense & Income Categories if none exist
@@ -337,6 +366,14 @@ class AuthRepository(
                 Category(userId = userId, nameBn = "ধার ফেরত গ্রহণ", nameEn = "Loan Collection", type = TransactionType.INCOME, iconName = "savings", colorHex = "#0D9488", isDefault = true)
             )
             categoryDao.insertCategories(defaultCategories)
+
+            // Upload starter categories to cloud
+            firestoreRepository?.let { repo ->
+                val insertedCats = categoryDao.getAllCategoriesList(userId)
+                for (cat in insertedCats) {
+                    try { repo.saveCategory(userId, cat) } catch (e: Exception) {}
+                }
+            }
         }
 
         // 3. Seed Default User Settings if not present
@@ -354,6 +391,11 @@ class AuthRepository(
                 currencySymbol = "৳"
             )
             settingsDao.insertOrUpdate(settings)
+
+            // Upload starter settings to cloud
+            firestoreRepository?.let { repo ->
+                try { repo.saveUserSettings(userId, settings) } catch (e: Exception) {}
+            }
         }
     }
 

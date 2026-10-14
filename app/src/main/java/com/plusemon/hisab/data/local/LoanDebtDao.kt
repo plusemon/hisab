@@ -29,6 +29,12 @@ interface LoanDebtDao {
     @Query("UPDATE loans_debts SET paidAmount = :paidAmount, isSettled = :isSettled WHERE id = :id AND userId = :userId")
     suspend fun recordRepayment(id: Long, userId: String, paidAmount: Double, isSettled: Boolean)
 
+    @Query("SELECT * FROM loans_debts WHERE userId = :userId")
+    suspend fun getAllDebtsList(userId: String): List<LoanDebt>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDebts(debts: List<LoanDebt>)
+
     @Query("DELETE FROM loans_debts WHERE id = :id AND userId = :userId")
     suspend fun deleteDebt(id: Long, userId: String)
 

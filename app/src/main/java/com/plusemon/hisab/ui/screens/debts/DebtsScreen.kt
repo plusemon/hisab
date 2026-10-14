@@ -448,7 +448,18 @@ fun DebtsScreen(
             if (selectedContactId == null && selectedVendorId == null) {
                 TabRow(
                     selectedTabIndex = debtPagerState.currentPage,
-                    containerColor = MaterialTheme.colorScheme.surface
+                    containerColor = MaterialTheme.colorScheme.surface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 4.dp),
+                    indicator = { tabPositions ->
+                        if (debtPagerState.currentPage < tabPositions.size) {
+                            TabRowDefaults.SecondaryIndicator(
+                                modifier = Modifier.tabIndicatorOffset(tabPositions[debtPagerState.currentPage]),
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
                 ) {
                     Tab(
                         selected = debtPagerState.currentPage == 0,
@@ -579,86 +590,91 @@ fun DebtsOverviewContent(
         }.sortedByDescending { kotlin.math.abs(it.second) }
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(16.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Flat cards for Receivable & Payable (No soft pastel fills)
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, IncomeGreen.copy(alpha = 0.5f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = if (isBn) "মোট পাওনা (সবাই দেবে)" else "Total Receivable",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = IncomeGreen
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    CurrencyAmountText(
-                        amount = totalReceivable,
-                        currencySymbol = currencySymbol,
-                        useBanglaDigits = useBnDigits,
-                        hideBalances = hideBalances,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = IncomeGreen
-                    )
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, IncomeGreen.copy(alpha = 0.5f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = if (isBn) "মোট পাওনা (সবাই দেবে)" else "Total Receivable",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = IncomeGreen
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        CurrencyAmountText(
+                            amount = totalReceivable,
+                            currencySymbol = currencySymbol,
+                            useBanglaDigits = useBnDigits,
+                            hideBalances = hideBalances,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = IncomeGreen
+                        )
+                    }
                 }
-            }
 
-            Card(
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(12.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column(modifier = Modifier.padding(16.dp)) {
-                    Text(
-                        text = if (isBn) "মোট দেনা (আমি দেব)" else "Total Payable",
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = ExpenseRed
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    CurrencyAmountText(
-                        amount = totalPayable,
-                        currencySymbol = currencySymbol,
-                        useBanglaDigits = useBnDigits,
-                        hideBalances = hideBalances,
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = ExpenseRed
-                    )
+                Card(
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(
+                            text = if (isBn) "মোট দেনা (আমি দেব)" else "Total Payable",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ExpenseRed
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        CurrencyAmountText(
+                            amount = totalPayable,
+                            currencySymbol = currencySymbol,
+                            useBanglaDigits = useBnDigits,
+                            hideBalances = hideBalances,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ExpenseRed
+                        )
+                    }
                 }
             }
         }
 
-        Text(
-            text = if (isBn) "কন্টাক্টসমূহ (লেনদেন অনুসারে)" else "Contacts Ledger",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        // Rule 7 / Prompt requirement: Empty state consistent with Shop Credit (Icon, headline, description, CTA)
-        if (contactSummaries.isEmpty()) {
-            Box(
+        item {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
+                    .padding(top = 8.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    text = if (isBn) "কন্টাক্টসমূহ (লেনদেন অনুসারে)" else "Contacts Ledger",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        if (contactSummaries.isEmpty()) {
+            item {
                 EmptyStateView(
                     icon = Icons.Default.People,
                     title = Localization.getString(Localization.Key.EMPTY_DEBTS, isBn),
@@ -668,11 +684,7 @@ fun DebtsOverviewContent(
                 )
             }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                items(contactSummaries, key = { it.first.id }) { (contact, net, contactDebts) ->
+            items(contactSummaries, key = { it.first.id }) { (contact, net, contactDebts) ->
                     val isReceivable = net > 0
                     val isPayable = net < 0
                     val badgeColor = when {
@@ -773,7 +785,6 @@ fun DebtsOverviewContent(
                             }
                         }
                     }
-                }
             }
         }
     }
@@ -948,13 +959,13 @@ fun ContactLedgerContent(
         )
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Card(
+        item {
+            Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -1109,20 +1120,26 @@ fun ContactLedgerContent(
                 }
             }
         }
+    }
 
-        Text(
-            text = if (isBn) "লেনদেনের ইতিহাস ও বাকি" else "Entries History",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        if (debts.isEmpty()) {
-            Box(
+        item {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
+                    .padding(top = 8.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    text = if (isBn) "লেনদেনের ইতিহাস ও বাকি" else "Entries History",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        if (debts.isEmpty()) {
+            item {
                 EmptyStateView(
                     icon = Icons.Default.People,
                     title = Localization.getString(Localization.Key.EMPTY_DEBTS, isBn),
@@ -1132,22 +1149,16 @@ fun ContactLedgerContent(
                 )
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(debts, key = { it.id }) { debt ->
-                    LoanDebtItemCard(
-                        debt = debt,
-                        isBangla = isBn,
-                        useBnDigits = useBnDigits,
-                        hideBalances = hideBalances,
-                        currencySymbol = currencySymbol,
-                        onRecordPayment = { onRecordPayment(debt) },
-                        onDelete = { onDeleteDebt(debt) }
-                    )
-                }
+            items(debts, key = { it.id }) { debt ->
+                LoanDebtItemCard(
+                    debt = debt,
+                    isBangla = isBn,
+                    useBnDigits = useBnDigits,
+                    hideBalances = hideBalances,
+                    currencySymbol = currencySymbol,
+                    onRecordPayment = { onRecordPayment(debt) },
+                    onDelete = { onDeleteDebt(debt) }
+                )
             }
         }
     }
@@ -1433,157 +1444,161 @@ fun ShopCreditOverviewContent(
         activeVendors.map { it.categoryTag }.filter { it.isNotBlank() }.distinct()
     }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         // Summary Header Card (Flat card with border, no soft red fill)
-        Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f)),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
-            Column(modifier = Modifier.padding(16.dp)) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Text(
-                        text = if (isBn) "মোট দোকান বাকি" else "Total Shop Credit Owed",
-                        style = MaterialTheme.typography.labelMedium,
+        item {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f)),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+            ) {
+                Column(modifier = Modifier.padding(16.dp)) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isBn) "মোট দোকান বাকি" else "Total Shop Credit Owed",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = ExpenseRed
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant
+                        ) {
+                            Text(
+                                text = if (isBn) "$owedVendorsCount টি দোকান / মোট $totalVendorsCount টি" else "Owed to $owedVendorsCount of $totalVendorsCount vendors",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = ExpenseRed,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(4.dp))
+                    CurrencyAmountText(
+                        amount = totalOwed,
+                        currencySymbol = currencySymbol,
+                        useBanglaDigits = useBnDigits,
+                        hideBalances = hideBalances,
+                        style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
                         color = ExpenseRed
                     )
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.surfaceVariant
-                    ) {
-                        Text(
-                            text = if (isBn) "$owedVendorsCount টি দোকান / মোট $totalVendorsCount টি" else "Owed to $owedVendorsCount of $totalVendorsCount vendors",
-                            style = MaterialTheme.typography.labelSmall,
-                            fontWeight = FontWeight.Bold,
-                            color = ExpenseRed,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
                 }
-                Spacer(modifier = Modifier.height(4.dp))
-                CurrencyAmountText(
-                    amount = totalOwed,
-                    currencySymbol = currencySymbol,
-                    useBanglaDigits = useBnDigits,
-                    hideBalances = hideBalances,
-                    style = MaterialTheme.typography.titleLarge,
-                    fontWeight = FontWeight.Bold,
-                    color = ExpenseRed
-                )
             }
         }
 
         // Section Title & Add New Shop Button
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = if (isBn) "দোকানের তালিকা" else "Shop Directory",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold
-            )
-            Button(
-                onClick = onAddNewVendorClick,
-                shape = RoundedCornerShape(12.dp),
-                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+        item {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 8.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(modifier = Modifier.width(4.dp))
-                Text(if (isBn) "নতুন শপ" else "Add Shop", fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (isBn) "দোকানের তালিকা" else "Shop Directory",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+                Button(
+                    onClick = onAddNewVendorClick,
+                    shape = RoundedCornerShape(12.dp),
+                    contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                ) {
+                    Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(if (isBn) "নতুন শপ" else "Add Shop", fontWeight = FontWeight.Bold)
+                }
             }
         }
 
         // Search Bar & Sort Dropdown
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = searchQuery,
-                onValueChange = { searchQuery = it },
-                placeholder = { Text(if (isBn) "দোকান খুঁজুন..." else "Search vendors...") },
-                leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.weight(1f)
-            )
+        item {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = { Text(if (isBn) "দোকান খুঁজুন..." else "Search vendors...") },
+                    leadingIcon = { Icon(Icons.Default.Search, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.weight(1f)
+                )
 
-            var sortExpanded by remember { mutableStateOf(false) }
-            Box {
-                IconButton(
-                    onClick = { sortExpanded = true },
-                    modifier = Modifier
-                        .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
-                        .size(50.dp)
-                ) {
-                    Icon(Icons.Default.FilterList, contentDescription = "Sort", tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                DropdownMenu(
-                    expanded = sortExpanded,
-                    onDismissRequest = { sortExpanded = false }
-                ) {
-                    DropdownMenuItem(
-                        text = { Text(if (isBn) "সর্বোচ্চ বাকি" else "Highest Balance") },
-                        onClick = { sortBy = 0; sortExpanded = false }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (isBn) "নামানুসারে" else "Alphabetical") },
-                        onClick = { sortBy = 1; sortExpanded = false }
-                    )
-                    DropdownMenuItem(
-                        text = { Text(if (isBn) "সাম্প্রতিক সক্রিয়" else "Most Recently Active") },
-                        onClick = { sortBy = 2; sortExpanded = false }
-                    )
+                var sortExpanded by remember { mutableStateOf(false) }
+                Box {
+                    IconButton(
+                        onClick = { sortExpanded = true },
+                        modifier = Modifier
+                            .background(MaterialTheme.colorScheme.surfaceVariant, RoundedCornerShape(12.dp))
+                            .size(50.dp)
+                    ) {
+                        Icon(Icons.Default.FilterList, contentDescription = "Sort", tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    DropdownMenu(
+                        expanded = sortExpanded,
+                        onDismissRequest = { sortExpanded = false }
+                    ) {
+                        DropdownMenuItem(
+                            text = { Text(if (isBn) "সর্বোচ্চ বাকি" else "Highest Balance") },
+                            onClick = { sortBy = 0; sortExpanded = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (isBn) "নামানুসারে" else "Alphabetical") },
+                            onClick = { sortBy = 1; sortExpanded = false }
+                        )
+                        DropdownMenuItem(
+                            text = { Text(if (isBn) "সাম্প্রতিক সক্রিয়" else "Most Recently Active") },
+                            onClick = { sortBy = 2; sortExpanded = false }
+                        )
+                    }
                 }
             }
         }
 
         // Optional Tag Filters Horizontally
         if (availableTags.isNotEmpty()) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .horizontalScroll(rememberScrollState()),
-                horizontalArrangement = Arrangement.spacedBy(8.dp)
-            ) {
-                FilterChip(
-                    selected = selectedTag == null,
-                    onClick = { selectedTag = null },
-                    label = { Text(Localization.getString(Localization.Key.ALL, isBn)) }
-                )
-                availableTags.forEach { tag ->
+            item {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
                     FilterChip(
-                        selected = selectedTag.equals(tag, true),
-                        onClick = { selectedTag = if (selectedTag.equals(tag, true)) null else tag },
-                        label = { Text(tag) }
+                        selected = selectedTag == null,
+                        onClick = { selectedTag = null },
+                        label = { Text(Localization.getString(Localization.Key.ALL, isBn)) }
                     )
+                    availableTags.forEach { tag ->
+                        FilterChip(
+                            selected = selectedTag.equals(tag, true),
+                            onClick = { selectedTag = if (selectedTag.equals(tag, true)) null else tag },
+                            label = { Text(tag) }
+                        )
+                    }
                 }
             }
         }
 
         // Vendors List or Empty State using EmptyStateView
         if (activeVendors.isEmpty() && archivedVendors.isEmpty()) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
-            ) {
+            item {
                 EmptyStateView(
                     icon = Icons.Default.Store,
                     title = if (isBn) "কোনো দোকান বাকি নেই" else "No shop credit recorded",
@@ -1593,12 +1608,6 @@ fun ShopCreditOverviewContent(
                 )
             }
         } else {
-            LazyColumn(
-                verticalArrangement = Arrangement.spacedBy(10.dp),
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .weight(1f)
-            ) {
                 if (activeVendors.isEmpty() && archivedVendors.isNotEmpty()) {
                     item {
                         Card(
@@ -1899,7 +1908,6 @@ fun ShopCreditOverviewContent(
                                     }
                                 }
                             }
-                        }
                     }
                 }
             }
@@ -1925,13 +1933,13 @@ fun VendorLedgerContent(
     val context = LocalContext.current
     val totalRemaining = purchases.filter { !it.isSettled }.sumOf { it.remainingAmount }
 
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
-            .padding(16.dp),
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 100.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        Card(
+        item {
+            Card(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -2190,20 +2198,26 @@ fun VendorLedgerContent(
                 }
             }
         }
+    }
 
-        Text(
-            text = if (isBn) "ক্রয় ও পেমেন্ট ইতিহাস" else "History Ledger",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.Bold
-        )
-
-        if (purchases.isEmpty()) {
-            Box(
+        item {
+            Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .weight(1f),
-                contentAlignment = Alignment.Center
+                    .padding(top = 8.dp, bottom = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                Text(
+                    text = if (isBn) "ক্রয় ও পেমেন্ট ইতিহাস" else "History Ledger",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+        }
+
+        if (purchases.isEmpty()) {
+            item {
                 EmptyStateView(
                     icon = Icons.Default.Store,
                     title = if (isBn) "কোনো ক্রয়ের ইতিহাস নেই" else "No purchases recorded",
@@ -2213,12 +2227,7 @@ fun VendorLedgerContent(
                 )
             }
         } else {
-            LazyColumn(
-                modifier = Modifier.fillMaxWidth(),
-                contentPadding = PaddingValues(bottom = 96.dp),
-                verticalArrangement = Arrangement.spacedBy(10.dp)
-            ) {
-                items(purchases, key = { it.id }) { purchase ->
+            items(purchases, key = { it.id }) { purchase ->
                     Card(
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
@@ -2271,7 +2280,6 @@ fun VendorLedgerContent(
                             }
                         }
                     }
-                }
             }
         }
     }

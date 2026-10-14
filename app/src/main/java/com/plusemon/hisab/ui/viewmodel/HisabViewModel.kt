@@ -91,9 +91,9 @@ data class PeriodReport(
 class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
-    val authRepository = AuthRepository(application, db)
-    val hisabRepository = HisabRepository(db)
     val firestoreRepository: FirestoreRepository = FirestoreRepositoryImpl(application, db)
+    val authRepository = AuthRepository(application, db, firestoreRepository)
+    val hisabRepository = HisabRepository(db)
     val updateRepository = UpdateRepository()
     val updateManager = UpdateManager(application)
 
@@ -1111,7 +1111,13 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 colorHex = colorHex,
                 iconName = iconName
             )
-            hisabRepository.addAccount(acc)
+            val newId = hisabRepository.addAccount(acc)
+            val savedAcc = acc.copy(id = newId)
+            try {
+                firestoreRepository.saveAccount(user.id, savedAcc)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore sync account error: ${e.message}")
+            }
             markSaved()
             _snackbarMessage.emit("অ্যাকাউন্ট যোগ করা হয়েছে")
         }
@@ -1140,6 +1146,11 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 iconName = iconName
             )
             hisabRepository.updateAccount(acc)
+            try {
+                firestoreRepository.saveAccount(user.id, acc)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore update account error: ${e.message}")
+            }
             markSaved()
             _snackbarMessage.emit("অ্যাকাউন্ট আপডেট করা হয়েছে")
         }
@@ -1176,12 +1187,19 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount(accountId: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val deleted = hisabRepository.deleteAccount(accountId, user.id)
             if (!deleted) {
                 _snackbarMessage.emit("এই অ্যাকাউন্টে লেনদেনের হিসেব রয়েছে, তাই মুছা যাবে না। আর্কাইভ করতে পারেন।")
             } else {
+                try {
+                    firestoreRepository.deleteAccount(user.id, accountId)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore delete account error: ${e.message}")
+                }
                 _snackbarMessage.emit("অ্যাকাউন্ট মুছে ফেলা হয়েছে")
             }
+            markSaved()
         }
     }
 
@@ -1198,6 +1216,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val cat = Category(
                 userId = user.id,
                 nameBn = nameBn,
@@ -1206,7 +1225,14 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 iconName = iconName,
                 colorHex = colorHex
             )
-            hisabRepository.addCategory(cat)
+            val newId = hisabRepository.addCategory(cat)
+            val savedCat = cat.copy(id = newId)
+            try {
+                firestoreRepository.saveCategory(user.id, savedCat)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore sync category error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("ক্যাটাগরি যোগ করা হয়েছে")
         }
     }
@@ -1221,6 +1247,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val cat = Category(
                 id = id,
                 userId = user.id,
@@ -1231,6 +1258,12 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 colorHex = colorHex
             )
             hisabRepository.updateCategory(cat)
+            try {
+                firestoreRepository.saveCategory(user.id, cat)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore sync category error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("ক্যাটাগরি আপডেট করা হয়েছে")
         }
     }
@@ -1238,12 +1271,26 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteCategory(categoryId: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val hardDeleted = hisabRepository.deleteCategory(categoryId, user.id)
             if (hardDeleted) {
+                try {
+                    firestoreRepository.deleteCategory(user.id, categoryId)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore delete category error: ${e.message}")
+                }
                 _snackbarMessage.emit("ক্যাটাগরি মুছে ফেলা হয়েছে")
             } else {
+                try {
+                    db.categoryDao().getCategoryById(categoryId, user.id)?.let {
+                        firestoreRepository.saveCategory(user.id, it)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore update archived category error: ${e.message}")
+                }
                 _snackbarMessage.emit("ক্যাটাগরিটিতে লেনদেন থাকায় এটি আর্কাইভ করা হয়েছে")
             }
+            markSaved()
         }
     }
 
@@ -1263,7 +1310,13 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 monthYear = monthYear,
                 limitAmount = limitAmount
             )
-            hisabRepository.setBudget(budget)
+            val newId = hisabRepository.setBudget(budget)
+            val savedBudget = budget.copy(id = if (budget.id == 0L) newId else budget.id)
+            try {
+                firestoreRepository.saveBudget(user.id, savedBudget)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore save budget error: ${e.message}")
+            }
             markSaved()
             _snackbarMessage.emit("বাজেট সংরক্ষণ করা হয়েছে")
         }
@@ -1272,7 +1325,14 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteBudget(budgetId: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.deleteBudget(budgetId, user.id)
+            try {
+                firestoreRepository.deleteBudget(user.id, budgetId)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore delete budget error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("বাজেট মুছে ফেলা হয়েছে")
         }
     }
@@ -1284,6 +1344,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun addSavingsGoal(name: String, targetAmount: Double, targetDate: Long?, note: String, colorHex: String, iconName: String) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val goal = SavingsGoal(
                 userId = user.id,
                 name = name,
@@ -1293,7 +1354,14 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 colorHex = colorHex,
                 iconName = iconName
             )
-            hisabRepository.addSavingsGoal(goal)
+            val newId = hisabRepository.addSavingsGoal(goal)
+            val savedGoal = goal.copy(id = newId)
+            try {
+                firestoreRepository.saveSavingsGoal(user.id, savedGoal)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore save savings goal error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("সঞ্চয় লক্ষ্য যুক্ত করা হয়েছে")
         }
     }
@@ -1301,7 +1369,17 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun adjustGoalSavings(id: Long, deltaAmount: Double) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.adjustGoalSavings(id, user.id, deltaAmount)
+            val updated = db.savingsGoalDao().getGoalById(id, user.id)
+            if (updated != null) {
+                try {
+                    firestoreRepository.saveSavingsGoal(user.id, updated)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore adjust goal error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit("সঞ্চয় আপডেট হয়েছে")
         }
     }
@@ -1309,7 +1387,14 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteSavingsGoal(id: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.deleteSavingsGoal(id, user.id)
+            try {
+                firestoreRepository.deleteSavingsGoal(user.id, id)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore delete goal error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("সঞ্চয় লক্ষ্য মুছে ফেলা হয়েছে")
         }
     }
@@ -1321,14 +1406,30 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun addContact(name: String, phone: String) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
-            hisabRepository.addContact(Contact(userId = user.id, name = name, phone = phone))
+            markSaving()
+            val contact = Contact(userId = user.id, name = name, phone = phone)
+            val newId = hisabRepository.addContact(contact)
+            try {
+                firestoreRepository.saveContact(user.id, contact.copy(id = newId))
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore save contact error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("কন্টাক্ট যুক্ত করা হয়েছে")
         }
     }
 
     fun updateContact(contact: Contact) {
+        val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.updateContact(contact)
+            try {
+                firestoreRepository.saveContact(user.id, contact)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore update contact error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("কন্টাক্টের তথ্য আপডেট করা হয়েছে")
         }
     }
@@ -1345,6 +1446,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val debt = LoanDebt(
                 userId = user.id,
                 contactId = contactId,
@@ -1356,7 +1458,21 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 note = note,
                 phone = phone
             )
-            hisabRepository.addLoanDebt(debt)
+            val newDebtId = hisabRepository.addLoanDebt(debt)
+            val createdDebt = db.loanDebtDao().getDebtById(newDebtId, user.id)
+            if (createdDebt != null) {
+                try {
+                    firestoreRepository.saveLoanDebt(user.id, createdDebt)
+                    createdDebt.transactionId?.let { txId ->
+                        db.transactionDao().getTransactionById(txId, user.id)?.let { tx ->
+                            firestoreRepository.saveTransaction(user.id, tx)
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore save loan debt error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit("ধার/লেনদেন হিসাব সংরক্ষণ করা হয়েছে")
         }
     }
@@ -1364,7 +1480,25 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun recordDebtPayment(id: Long, accountId: Long, paymentAmount: Double, note: String) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
-            hisabRepository.recordLoanRepayment(id, user.id, accountId, paymentAmount, note)
+            markSaving()
+            val repId = hisabRepository.recordLoanRepayment(id, user.id, accountId, paymentAmount, note)
+            val updatedDebt = db.loanDebtDao().getDebtById(id, user.id)
+            if (updatedDebt != null) {
+                try {
+                    firestoreRepository.saveLoanDebt(user.id, updatedDebt)
+                    db.loanRepaymentDao().getRepaymentsForLoanSync(id).find { it.id == repId }?.let { rep ->
+                        firestoreRepository.saveLoanRepayment(user.id, rep)
+                        rep.transactionId?.let { txId ->
+                            db.transactionDao().getTransactionById(txId, user.id)?.let { tx ->
+                                firestoreRepository.saveTransaction(user.id, tx)
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore save repayment error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit("পরিশোধের তথ্য সংরক্ষণ করা হয়েছে")
         }
     }
@@ -1372,7 +1506,22 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteLoanDebt(id: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
+            val debt = db.loanDebtDao().getDebtById(id, user.id)
+            val txId = debt?.transactionId
+            val repayments = db.loanRepaymentDao().getRepaymentsForLoanSync(id)
             hisabRepository.deleteLoanDebt(id, user.id)
+            try {
+                firestoreRepository.deleteLoanDebt(user.id, id)
+                txId?.let { firestoreRepository.deleteTransaction(user.id, it) }
+                repayments.forEach { rep ->
+                    firestoreRepository.deleteLoanRepayment(user.id, rep.id)
+                    rep.transactionId?.let { firestoreRepository.deleteTransaction(user.id, it) }
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore delete loan debt error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("হিসাব মুছে ফেলা হয়েছে")
         }
     }
@@ -1390,6 +1539,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val vendor = Vendor(
                 userId = user.id,
                 name = name,
@@ -1399,6 +1549,12 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             )
             val newId = hisabRepository.addVendor(vendor)
             val created = vendor.copy(id = newId)
+            try {
+                firestoreRepository.saveVendor(user.id, created)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore save vendor error: ${e.message}")
+            }
+            markSaved()
             onCreated?.invoke(created)
             _snackbarMessage.emit(if (_settings.value.language == "bn") "দোকান যুক্ত করা হয়েছে" else "Shop added successfully")
         }
@@ -1407,7 +1563,14 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun updateVendor(vendor: Vendor) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.updateVendor(vendor.copy(userId = user.id))
+            try {
+                firestoreRepository.saveVendor(user.id, vendor.copy(userId = user.id))
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore update vendor error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit(if (_settings.value.language == "bn") "দোকানের তথ্য আপডেট করা হয়েছে" else "Shop information updated")
         }
     }
@@ -1415,7 +1578,17 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun updateVendorPhone(vendorId: Long, phone: String) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.updateVendorPhone(vendorId, user.id, phone)
+            val updated = db.vendorDao().getVendorById(vendorId, user.id)
+            if (updated != null) {
+                try {
+                    firestoreRepository.saveVendor(user.id, updated)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore update vendor phone error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit(if (_settings.value.language == "bn") "মোবাইল নম্বর আপডেট করা হয়েছে" else "Phone number updated")
         }
     }
@@ -1423,7 +1596,17 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun archiveVendor(vendorId: Long, isArchived: Boolean) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.archiveVendor(vendorId, user.id, isArchived)
+            val updated = db.vendorDao().getVendorById(vendorId, user.id)
+            if (updated != null) {
+                try {
+                    firestoreRepository.saveVendor(user.id, updated)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore archive vendor error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit(if (isArchived) "ভেন্ডর আর্কাইভ করা হয়েছে" else "ভেন্ডর সক্রিয় করা হয়েছে")
         }
     }
@@ -1441,7 +1624,20 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
-            hisabRepository.addShopCreditPurchase(vendorId, vendorName, user.id, amount, dueDate, note, phone, locationNote, categoryTag)
+            markSaving()
+            val newId = hisabRepository.addShopCreditPurchase(vendorId, vendorName, user.id, amount, dueDate, note, phone, locationNote, categoryTag)
+            val purchase = db.shopCreditPurchaseDao().getPurchaseById(newId, user.id)
+            if (purchase != null) {
+                try {
+                    firestoreRepository.saveShopCreditPurchase(user.id, purchase)
+                    db.vendorDao().getVendorById(purchase.vendorId, user.id)?.let { v ->
+                        firestoreRepository.saveVendor(user.id, v)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore save purchase error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit("বাকিতে ক্রয়ের হিসাব সংরক্ষণ করা হয়েছে")
         }
     }
@@ -1449,7 +1645,25 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun settleShopCredit(vendorId: Long, accountId: Long, amount: Double, note: String) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
-            hisabRepository.settleShopCredit(vendorId, user.id, accountId, amount, note)
+            markSaving()
+            val payId = hisabRepository.settleShopCredit(vendorId, user.id, accountId, amount, note)
+            val payment = db.shopCreditPaymentDao().getAllPaymentsList(user.id).find { it.id == payId }
+            if (payment != null) {
+                try {
+                    firestoreRepository.saveShopCreditPayment(user.id, payment)
+                    payment.transactionId?.let { txId ->
+                        db.transactionDao().getTransactionById(txId, user.id)?.let { tx ->
+                            firestoreRepository.saveTransaction(user.id, tx)
+                        }
+                    }
+                    db.shopCreditPurchaseDao().getAllPurchasesList(user.id).filter { it.vendorId == vendorId }.forEach { p ->
+                        firestoreRepository.saveShopCreditPurchase(user.id, p)
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore settle credit error: ${e.message}")
+                }
+            }
+            markSaved()
             _snackbarMessage.emit("বাকি পরিশোধ সম্পন্ন হয়েছে")
         }
     }
@@ -1470,6 +1684,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             val rule = RecurringRule(
                 userId = user.id,
                 accountId = accountId,
@@ -1481,7 +1696,14 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 endDate = endDate,
                 note = note
             )
-            hisabRepository.addRecurringRule(rule)
+            val newId = hisabRepository.addRecurringRule(rule)
+            val savedRule = rule.copy(id = newId)
+            try {
+                firestoreRepository.saveRecurringRule(user.id, savedRule)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore save recurring rule error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("স্বয়ংক্রিয় লেনদেন রুল যুক্ত করা হয়েছে")
         }
     }
@@ -1489,14 +1711,30 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun togglePauseRecurringRule(id: Long, isCurrentlyPaused: Boolean) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.setRecurringPaused(id, user.id, !isCurrentlyPaused)
+            db.recurringDao().getAllRulesList(user.id).find { it.id == id }?.let { rule ->
+                try {
+                    firestoreRepository.saveRecurringRule(user.id, rule)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore pause recurring rule error: ${e.message}")
+                }
+            }
+            markSaved()
         }
     }
 
     fun deleteRecurringRule(id: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            markSaving()
             hisabRepository.deleteRecurringRule(id, user.id)
+            try {
+                firestoreRepository.deleteRecurringRule(user.id, id)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore delete recurring rule error: ${e.message}")
+            }
+            markSaved()
             _snackbarMessage.emit("স্বয়ংক্রিয় লেনদেন রুল মুছে ফেলা হয়েছে")
         }
     }
@@ -1593,7 +1831,16 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         val user = currentUser.value
         val target = if (user != null) updated.copy(userId = user.id) else updated
         viewModelScope.launch {
+            markSaving()
             hisabRepository.updateSettings(target)
+            if (user != null) {
+                try {
+                    firestoreRepository.saveUserSettings(user.id, target)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Firestore save user settings error: ${e.message}")
+                }
+            }
+            markSaved()
         }
     }
 

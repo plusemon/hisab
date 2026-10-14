@@ -18,6 +18,12 @@ interface ShopCreditPaymentDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPayment(payment: ShopCreditPayment): Long
 
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertPayments(payments: List<ShopCreditPayment>)
+
+    @Query("SELECT * FROM shop_credit_payments WHERE userId = :userId")
+    suspend fun getAllPaymentsList(userId: String): List<ShopCreditPayment>
+
     @Query("DELETE FROM shop_credit_payments WHERE id = :id AND userId = :userId")
     suspend fun deletePayment(id: Long, userId: String)
 

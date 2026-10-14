@@ -1,6 +1,6 @@
 {
-  "summary":  "Implementation plan for showing resulting account balance preview and negative balance warning before confirming transaction in AddTransactionBottomSheet and AddEditTransactionScreen.",
-  "updatedAt":  "2026-10-11T09:07:20.413856808Z",
-  "requestFeedback":  true,
-  "userFacing":  true
+  "summary": "Complete Cloud Sync & Restore Architecture Plan for Hisab, covering all user financial entities (Transactions, Accounts, Categories, Budgets, Savings Goals, Loans/Debts, Shop Credit, Recurring Rules) and user preferences (language, numeral system, currency, theme, PIN settings), with cloud-priority restoration on login and instant real-time sync.",
+  "updatedAt": "2026-10-14T03:45:21.822083416Z",
+  "requestFeedback": true,
+  "userFacing": true
 }
