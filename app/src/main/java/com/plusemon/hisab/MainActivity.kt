@@ -367,15 +367,14 @@ fun HisabMainApp(
                         Screen.Recurring.route -> {
                             RecurringScreen(
                                 viewModel = viewModel,
-                                onNavigateBack = { currentSubscreen = Screen.Settings.route }
+                                onNavigateBack = { currentSubscreen = null }
                             )
                         }
 
                         Screen.Settings.route -> {
                             SettingsScreen(
                                 viewModel = viewModel,
-                                onNavigateBack = { currentSubscreen = null },
-                                onNavigateToRecurring = { currentSubscreen = Screen.Recurring.route }
+                                onNavigateBack = { currentSubscreen = null }
                             )
                         }
                     }
@@ -450,6 +449,7 @@ fun HisabMainApp(
                                 onNavigateToReports = { currentSubscreen = Screen.Reports.route },
                                 onNavigateToAccounts = { currentSubscreen = Screen.Accounts.route },
                                 onNavigateToCategories = { currentSubscreen = Screen.Categories.route },
+                                onNavigateToRecurring = { currentSubscreen = Screen.Recurring.route },
                                 onNavigateToSettings = { currentSubscreen = Screen.Settings.route }
                             )
                         }

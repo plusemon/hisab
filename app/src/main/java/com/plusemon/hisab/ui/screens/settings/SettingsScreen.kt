@@ -78,7 +78,6 @@ import com.plusemon.hisab.ui.viewmodel.HisabViewModel
 fun SettingsScreen(
     viewModel: HisabViewModel,
     onNavigateBack: () -> Unit,
-    onNavigateToRecurring: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -269,15 +268,6 @@ fun SettingsScreen(
                             }
                         )
                     }
-
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-
-                    // Recurring Transactions
-                    SettingsRowItem(
-                        icon = Icons.Default.Repeat,
-                        title = Localization.getString(Localization.Key.RECURRING_TRANSACTIONS, isBn),
-                        onClick = onNavigateToRecurring
-                    )
                 }
             }
 

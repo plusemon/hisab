@@ -26,6 +26,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
@@ -61,6 +62,7 @@ fun MoreScreen(
     onNavigateToReports: () -> Unit,
     onNavigateToAccounts: () -> Unit,
     onNavigateToCategories: () -> Unit,
+    onNavigateToRecurring: () -> Unit,
     onNavigateToSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -70,6 +72,7 @@ fun MoreScreen(
     val syncStatus by viewModel.appSyncStatus.collectAsState()
     val accounts by viewModel.accountsWithBalances.collectAsState()
     val categories by viewModel.categories.collectAsState()
+    val recurringRules by viewModel.recurringRules.collectAsState()
 
     Column(
         modifier = modifier
@@ -244,6 +247,22 @@ fun MoreScreen(
                     badgeText = if (categories.isNotEmpty()) "${categories.size}" else null,
                     onClick = onNavigateToCategories,
                     testTag = "more_categories_tile"
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
+                MoreTileItem(
+                    icon = Icons.Default.Repeat,
+                    iconBgColor = Color(0xFF0D9488).copy(alpha = 0.14f),
+                    iconTint = Color(0xFF0F766E),
+                    title = if (isBn) "স্বয়ংক্রিয় লেনদেন" else "Recurring Transactions",
+                    subtitle = if (isBn) "নিয়মিত বিল, বেতন ও পুনরাবৃত্ত লেনদেনের নিয়ম" else "Automated bills, subscriptions & scheduled rules",
+                    badgeText = if (recurringRules.isNotEmpty()) "${recurringRules.size}" else null,
+                    onClick = onNavigateToRecurring,
+                    testTag = "more_recurring_tile"
                 )
             }
         }
