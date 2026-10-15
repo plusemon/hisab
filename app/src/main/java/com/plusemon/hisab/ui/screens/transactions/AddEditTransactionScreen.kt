@@ -54,9 +54,14 @@ import androidx.compose.material3.Tab
 import androidx.compose.material3.TabRow
 import androidx.compose.material3.TabRowDefaults
 import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import java.util.Calendar
+import java.util.TimeZone
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -388,6 +393,7 @@ fun AddEditTransactionScreen(
                     selectedCategoryId = selectedCategoryId,
                     onSelectCategoryId = { selectedCategoryId = it },
                     dateTimestamp = dateTimestamp,
+                    onDateChange = { dateTimestamp = it },
                     note = note,
                     onNoteChange = { note = it },
                     receiptUriStr = receiptUriStr,
@@ -530,6 +536,7 @@ fun AddEditTransactionScreen(
                             selectedCategoryId = selectedCategoryId,
                             onSelectCategoryId = { selectedCategoryId = it },
                             dateTimestamp = dateTimestamp,
+                            onDateChange = { dateTimestamp = it },
                             note = note,
                             onNoteChange = { note = it },
                             receiptUriStr = receiptUriStr,
@@ -550,6 +557,7 @@ fun AddEditTransactionScreen(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun TransactionFormFields(
     type: TransactionType,
@@ -570,6 +578,7 @@ private fun TransactionFormFields(
     selectedCategoryId: Long?,
     onSelectCategoryId: (Long) -> Unit,
     dateTimestamp: Long,
+    onDateChange: (Long) -> Unit,
     note: String,
     onNoteChange: (String) -> Unit,
     receiptUriStr: String?,
@@ -821,32 +830,162 @@ private fun TransactionFormFields(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Date & Time Display
+        var showDatePicker by remember { mutableStateOf(false) }
+
+        if (showDatePicker) {
+            val datePickerState = rememberDatePickerState(
+                initialSelectedDateMillis = dateTimestamp
+            )
+            DatePickerDialog(
+                onDismissRequest = { showDatePicker = false },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            datePickerState.selectedDateMillis?.let { selectedUtcMillis ->
+                                val calendar = Calendar.getInstance()
+                                calendar.timeInMillis = dateTimestamp
+                                val hour = calendar.get(Calendar.HOUR_OF_DAY)
+                                val minute = calendar.get(Calendar.MINUTE)
+
+                                val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                                utcCal.timeInMillis = selectedUtcMillis
+                                val year = utcCal.get(Calendar.YEAR)
+                                val month = utcCal.get(Calendar.MONTH)
+                                val day = utcCal.get(Calendar.DAY_OF_MONTH)
+
+                                val localCal = Calendar.getInstance()
+                                localCal.set(year, month, day, hour, minute)
+                                onDateChange(localCal.timeInMillis)
+                            }
+                            showDatePicker = false
+                        }
+                    ) {
+                        Text(if (isBn) "ঠিক আছে" else "OK", fontWeight = FontWeight.Bold)
+                    }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showDatePicker = false }) {
+                        Text(Localization.getString(Localization.Key.CANCEL, isBn))
+                    }
+                }
+            ) {
+                DatePicker(state = datePickerState)
+            }
+        }
+
+        // Date & Time Display (Interactive & Changeable)
+        Text(
+            text = Localization.getString(Localization.Key.DATE, isBn),
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold,
+            color = MaterialTheme.colorScheme.onSurface
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
         Surface(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(RoundedCornerShape(12.dp)),
+                .clip(RoundedCornerShape(12.dp))
+                .clickable { showDatePicker = true }
+                .testTag("tx_date_picker_button"),
             color = MaterialTheme.colorScheme.surfaceVariant,
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(14.dp),
+                    .padding(horizontal = 14.dp, vertical = 12.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Icon(
-                    imageVector = Icons.Default.CalendarToday,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(20.dp)
-                )
-                Spacer(modifier = Modifier.width(10.dp))
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Text(
+                        text = Formatters.formatDateTime(dateTimestamp, isBn),
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+
                 Text(
-                    text = Formatters.formatDateTime(dateTimestamp, isBn),
-                    style = MaterialTheme.typography.bodyMedium,
-                    fontWeight = FontWeight.Medium
+                    text = if (isBn) "পরিবর্তন করুন" else "Change",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary
                 )
+            }
+        }
+
+        // Quick date shortcuts
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(top = 6.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onDateChange(System.currentTimeMillis()) }
+            ) {
+                Text(
+                    text = if (isBn) "আজকে" else "Today",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { onDateChange(System.currentTimeMillis() - 86400000L) }
+            ) {
+                Text(
+                    text = if (isBn) "গতকাল" else "Yesterday",
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                )
+            }
+
+            Surface(
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { showDatePicker = true }
+            ) {
+                Row(
+                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        modifier = Modifier.size(12.dp),
+                        tint = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Text(
+                        text = if (isBn) "তারিখ বাছুন" else "Select Date",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.onPrimaryContainer
+                    )
+                }
             }
         }
 

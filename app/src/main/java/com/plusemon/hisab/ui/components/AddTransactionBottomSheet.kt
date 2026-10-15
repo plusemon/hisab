@@ -5,6 +5,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -19,15 +20,12 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Notes
-import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
@@ -39,21 +37,24 @@ import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.Card
-import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExposedDropdownMenuBox
+import androidx.compose.material3.ExposedDropdownMenuDefaults
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
-import androidx.compose.material3.Tab
-import androidx.compose.material3.TabRow
-import androidx.compose.material3.TabRowDefaults
-import androidx.compose.material3.TabRowDefaults.tabIndicatorOffset
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
@@ -66,28 +67,32 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
-import com.plusemon.hisab.data.model.Category
 import com.plusemon.hisab.data.model.TransactionType
-import com.plusemon.hisab.data.model.UserAccount
 import com.plusemon.hisab.domain.util.Formatters
 import com.plusemon.hisab.domain.util.Localization
 import com.plusemon.hisab.ui.screens.transactions.AccountSelectorChips
-import com.plusemon.hisab.ui.screens.transactions.CategoryGridSelector
 import com.plusemon.hisab.ui.theme.ExpenseRed
 import com.plusemon.hisab.ui.theme.IncomeGreen
 import com.plusemon.hisab.ui.theme.TransferBlue
 import com.plusemon.hisab.ui.viewmodel.HisabViewModel
 import kotlinx.coroutines.launch
+import java.util.Calendar
+import java.util.TimeZone
 
+/**
+ * Modern, compact BottomSheet for adding transactions (Expense, Income, Transfer).
+ * Styled consistently with the recurring transaction bottom sheet with a clean
+ * single-scroll layout, compact type chips, exposed category dropdown, and an interactive,
+ * changeable date & time picker.
+ */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AddTransactionBottomSheet(
@@ -103,21 +108,17 @@ fun AddTransactionBottomSheet(
     val categories by viewModel.categories.collectAsState()
     val availableAccounts = remember(accountsWithBalances) { accountsWithBalances.map { it.account } }
 
-    val initialPageIndex = when (initialType) {
-        TransactionType.EXPENSE -> 0
-        TransactionType.INCOME -> 1
-        TransactionType.TRANSFER -> 2
-    }
-
-    val pagerState = rememberPagerState(initialPage = initialPageIndex) { 3 }
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     val coroutineScope = rememberCoroutineScope()
 
+    var selectedType by remember(initialType) { mutableStateOf(initialType) }
     var amountText by remember { mutableStateOf("") }
     var feeText by remember { mutableStateOf("") }
     var note by remember { mutableStateOf("") }
     var receiptUriStr by remember { mutableStateOf<String?>(null) }
     var dateTimestamp by remember { mutableStateOf(System.currentTimeMillis()) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var categoryDropdownExpanded by remember { mutableStateOf(false) }
     var errorMessage by remember { mutableStateOf<String?>(null) }
 
     var selectedAccountId by remember {
@@ -158,7 +159,7 @@ fun AddTransactionBottomSheet(
         }
     }
 
-    // Photo picker launcher (Zero-permission Photo Picker)
+    // Photo picker launcher (Zero-permission Android Photo Picker)
     val photoPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickVisualMedia()
     ) { uri: Uri? ->
@@ -207,13 +208,55 @@ fun AddTransactionBottomSheet(
                         fee = fee,
                         type = activeType,
                         dateTimestamp = dateTimestamp,
-                        note = note,
+                        note = note.trim(),
                         receiptUri = receiptUriStr,
                         exchangeRate = 1.0
                     )
                     closeSheet()
                 }
             }
+        }
+    }
+
+    // Material 3 Date Picker Dialog
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState(
+            initialSelectedDateMillis = dateTimestamp
+        )
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        datePickerState.selectedDateMillis?.let { selectedUtcMillis ->
+                            val calendar = Calendar.getInstance()
+                            calendar.timeInMillis = dateTimestamp
+                            val hour = calendar.get(Calendar.HOUR_OF_DAY)
+                            val minute = calendar.get(Calendar.MINUTE)
+
+                            val utcCal = Calendar.getInstance(TimeZone.getTimeZone("UTC"))
+                            utcCal.timeInMillis = selectedUtcMillis
+                            val year = utcCal.get(Calendar.YEAR)
+                            val month = utcCal.get(Calendar.MONTH)
+                            val day = utcCal.get(Calendar.DAY_OF_MONTH)
+
+                            val localCal = Calendar.getInstance()
+                            localCal.set(year, month, day, hour, minute)
+                            dateTimestamp = localCal.timeInMillis
+                        }
+                        showDatePicker = false
+                    }
+                ) {
+                    Text(if (isBn) "ঠিক আছে" else "OK", fontWeight = FontWeight.Bold)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text(Localization.getString(Localization.Key.CANCEL, isBn))
+                }
+            }
+        ) {
+            DatePicker(state = datePickerState)
         }
     }
 
@@ -228,558 +271,666 @@ fun AddTransactionBottomSheet(
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
         containerColor = MaterialTheme.colorScheme.surface,
         tonalElevation = 4.dp,
-        modifier = Modifier.testTag("add_transaction_bottom_sheet")
+        modifier = Modifier
+            .imePadding()
+            .testTag("add_transaction_bottom_sheet")
     ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .imePadding()
                 .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 4.dp)
         ) {
-            // Header with title and close button
+            // Header: Title and Close button
             Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 4.dp),
+                modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Column {
-                    Text(
-                        text = if (isBn) "নতুন লেনদেন" else "New Transaction",
-                        style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.onSurface
-                    )
-                    Text(
-                        text = if (isBn) "ট্যাব পরিবর্তন করতে ডানে/বামে সোয়াইপ করুন" else "Swipe left / right to change tabs",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
+                Text(
+                    text = Localization.getString(Localization.Key.ADD_TRANSACTION, isBn),
+                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
 
                 IconButton(
                     onClick = { closeSheet() },
                     modifier = Modifier
-                        .size(48.dp)
+                        .size(36.dp)
                         .testTag("close_sheet_btn")
                 ) {
                     Icon(
                         imageVector = Icons.Default.Close,
-                        contentDescription = if (isBn) "বন্ধ করুন" else "Close",
+                        contentDescription = Localization.getString(Localization.Key.CANCEL, isBn),
                         tint = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
             }
 
-            // Swipeable Tabs (Expense, Income, Transfer)
-            TabRow(
-                selectedTabIndex = pagerState.currentPage,
-                containerColor = MaterialTheme.colorScheme.surface,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 16.dp, vertical = 6.dp)
-                    .clip(RoundedCornerShape(12.dp)),
-                indicator = { tabPositions ->
-                    if (pagerState.currentPage < tabPositions.size) {
-                        val indicatorColor = when (pagerState.currentPage) {
-                            0 -> ExpenseRed
-                            1 -> IncomeGreen
-                            else -> TransferBlue
-                        }
-                        TabRowDefaults.SecondaryIndicator(
-                            modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
-                            color = indicatorColor
-                        )
-                    }
-                }
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Compact Type Selector (Expense / Income / Transfer)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Tab(
-                    selected = pagerState.currentPage == 0,
+                FilterChip(
+                    selected = selectedType == TransactionType.EXPENSE,
                     onClick = {
-                        coroutineScope.launch { pagerState.animateScrollToPage(0) }
+                        selectedType = TransactionType.EXPENSE
+                        errorMessage = null
                     },
-                    icon = {
+                    leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.TrendingDown,
                             contentDescription = null,
-                            tint = if (pagerState.currentPage == 0) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            tint = if (selectedType == TransactionType.EXPENSE) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
                         )
                     },
-                    text = {
-                        Text(
-                            text = Localization.getString(Localization.Key.EXPENSE_SHORT, isBn),
-                            fontWeight = FontWeight.Bold,
-                            color = if (pagerState.currentPage == 0) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    label = {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = Localization.getString(Localization.Key.EXPENSE_SHORT, isBn),
+                                fontWeight = if (selectedType == TransactionType.EXPENSE) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
                     },
-                    modifier = Modifier.testTag("dialog_tab_expense")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("dialog_tab_expense"),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = ExpenseRed.copy(alpha = 0.15f),
+                        selectedLabelColor = ExpenseRed
+                    ),
+                    shape = RoundedCornerShape(12.dp)
                 )
 
-                Tab(
-                    selected = pagerState.currentPage == 1,
+                FilterChip(
+                    selected = selectedType == TransactionType.INCOME,
                     onClick = {
-                        coroutineScope.launch { pagerState.animateScrollToPage(1) }
+                        selectedType = TransactionType.INCOME
+                        errorMessage = null
                     },
-                    icon = {
+                    leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.TrendingUp,
                             contentDescription = null,
-                            tint = if (pagerState.currentPage == 1) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            tint = if (selectedType == TransactionType.INCOME) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
                         )
                     },
-                    text = {
-                        Text(
-                            text = Localization.getString(Localization.Key.INCOME_SHORT, isBn),
-                            fontWeight = FontWeight.Bold,
-                            color = if (pagerState.currentPage == 1) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    label = {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = Localization.getString(Localization.Key.INCOME_SHORT, isBn),
+                                fontWeight = if (selectedType == TransactionType.INCOME) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
                     },
-                    modifier = Modifier.testTag("dialog_tab_income")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("dialog_tab_income"),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = IncomeGreen.copy(alpha = 0.15f),
+                        selectedLabelColor = IncomeGreen
+                    ),
+                    shape = RoundedCornerShape(12.dp)
                 )
 
-                Tab(
-                    selected = pagerState.currentPage == 2,
+                FilterChip(
+                    selected = selectedType == TransactionType.TRANSFER,
                     onClick = {
-                        coroutineScope.launch { pagerState.animateScrollToPage(2) }
+                        selectedType = TransactionType.TRANSFER
+                        errorMessage = null
                     },
-                    icon = {
+                    leadingIcon = {
                         Icon(
                             imageVector = Icons.Default.SwapHoriz,
                             contentDescription = null,
-                            tint = if (pagerState.currentPage == 2) TransferBlue else MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.size(18.dp)
+                            tint = if (selectedType == TransactionType.TRANSFER) TransferBlue else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(16.dp)
                         )
                     },
-                    text = {
-                        Text(
-                            text = Localization.getString(Localization.Key.TRANSFER_SHORT, isBn),
-                            fontWeight = FontWeight.Bold,
-                            color = if (pagerState.currentPage == 2) TransferBlue else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    label = {
+                        Box(modifier = Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                            Text(
+                                text = Localization.getString(Localization.Key.TRANSFER_SHORT, isBn),
+                                fontWeight = if (selectedType == TransactionType.TRANSFER) FontWeight.Bold else FontWeight.Normal
+                            )
+                        }
                     },
-                    modifier = Modifier.testTag("dialog_tab_transfer")
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("dialog_tab_transfer"),
+                    colors = FilterChipDefaults.filterChipColors(
+                        selectedContainerColor = TransferBlue.copy(alpha = 0.15f),
+                        selectedLabelColor = TransferBlue
+                    ),
+                    shape = RoundedCornerShape(12.dp)
                 )
             }
 
-            // Horizontal Pager with Left / Right swipe transitions
-            HorizontalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxWidth(),
-                beyondViewportPageCount = 1
-            ) { page ->
-                val pageType = when (page) {
-                    0 -> TransactionType.EXPENSE
-                    1 -> TransactionType.INCOME
-                    else -> TransactionType.TRANSFER
-                }
+            Spacer(modifier = Modifier.height(12.dp))
 
-                val pageCategories = remember(categories, pageType) {
-                    categories.filter { it.type == pageType }
-                }
-
-                val currentSelectedCategoryId = when (pageType) {
-                    TransactionType.EXPENSE -> selectedExpenseCategoryId
-                    TransactionType.INCOME -> selectedIncomeCategoryId
-                    TransactionType.TRANSFER -> null
-                }
-
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .verticalScroll(rememberScrollState())
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                ) {
-                    // Big Amount Input Card
-                    Card(
-                        modifier = Modifier.fillMaxWidth(),
-                        shape = RoundedCornerShape(16.dp),
-                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                    ) {
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(16.dp),
-                            horizontalAlignment = Alignment.CenterHorizontally
-                        ) {
-                            Text(
-                                text = Localization.getString(Localization.Key.AMOUNT, isBn),
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-
-                            Spacer(modifier = Modifier.height(4.dp))
-
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.Center
-                            ) {
-                                Text(
-                                    text = currSymbol,
-                                    fontSize = 32.sp,
-                                    fontWeight = FontWeight.Bold,
-                                    color = when (pageType) {
-                                        TransactionType.EXPENSE -> ExpenseRed
-                                        TransactionType.INCOME -> IncomeGreen
-                                        TransactionType.TRANSFER -> TransferBlue
-                                    }
-                                )
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                OutlinedTextField(
-                                    value = amountText,
-                                    onValueChange = {
-                                        if (it.isEmpty() || it.matches(Regex("""^\d*\.?\d{0,2}$"""))) {
-                                            amountText = it
-                                            errorMessage = null
-                                        }
-                                    },
-                                    placeholder = { Text("0.00", fontSize = 32.sp, fontWeight = FontWeight.Bold) },
-                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                                    singleLine = true,
-                                    textStyle = MaterialTheme.typography.headlineLarge.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = when (pageType) {
-                                            TransactionType.EXPENSE -> ExpenseRed
-                                            TransactionType.INCOME -> IncomeGreen
-                                            TransactionType.TRANSFER -> TransferBlue
-                                        }
-                                    ),
-                                    modifier = Modifier
-                                        .width(220.dp)
-                                        .testTag("dialog_amount_input_${pageType.name.lowercase()}")
-                                )
-                            }
-
-                            // Quick amount chips (+50, +100, +500, +1000, +5000)
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(top = 12.dp),
-                                horizontalArrangement = Arrangement.SpaceEvenly
-                            ) {
-                                listOf(50, 100, 500, 1000, 5000).forEach { quickVal ->
-                                    Surface(
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(12.dp))
-                                            .clickable {
-                                                val currentVal = amountText.toDoubleOrNull() ?: 0.0
-                                                val nextVal = currentVal + quickVal
-                                                amountText = if (nextVal % 1.0 == 0.0) nextVal.toInt().toString() else nextVal.toString()
-                                                errorMessage = null
-                                            }
-                                            .padding(horizontal = 10.dp, vertical = 6.dp),
-                                        color = MaterialTheme.colorScheme.surfaceVariant
-                                    ) {
-                                        Text(
-                                            text = "+$quickVal",
-                                            style = MaterialTheme.typography.labelMedium,
-                                            fontWeight = FontWeight.Bold,
-                                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                                        )
-                                    }
-                                }
-                            }
-                        }
+            // Compact Amount Input with Currency Prefix
+            OutlinedTextField(
+                value = amountText,
+                onValueChange = {
+                    if (it.isEmpty() || it.matches(Regex("""^\d*\.?\d{0,2}$"""))) {
+                        amountText = it
+                        errorMessage = null
                     }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    if (pageType == TransactionType.TRANSFER) {
-                        // TRANSFER ACCOUNTS
-                        Text(
-                            text = Localization.getString(Localization.Key.FROM_ACCOUNT, isBn),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        AccountSelectorChips(
-                            accounts = availableAccounts,
-                            selectedId = selectedAccountId,
-                            onSelect = { selectedAccountId = it }
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        Text(
-                            text = Localization.getString(Localization.Key.TO_ACCOUNT, isBn),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        AccountSelectorChips(
-                            accounts = availableAccounts,
-                            selectedId = selectedToAccountId,
-                            onSelect = { selectedToAccountId = it }
-                        )
-
-                        Spacer(modifier = Modifier.height(12.dp))
-
-                        OutlinedTextField(
-                            value = feeText,
-                            onValueChange = { feeText = it },
-                            label = { Text(Localization.getString(Localization.Key.FEE, isBn)) },
-                            placeholder = { Text("0.00") },
-                            keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            modifier = Modifier.fillMaxWidth()
-                        )
-                    } else {
-                        // EXPENSE / INCOME ACCOUNT
-                        Text(
-                            text = Localization.getString(Localization.Key.ACCOUNT, isBn),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        if (availableAccounts.isEmpty()) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 8.dp)
-                                    .clickable { viewModel.ensureDefaultData() }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Receipt,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = if (isBn) "ডিফল্ট অ্যাকাউন্ট তৈরি করতে ট্যাপ করুন" else "Tap to seed default accounts",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        } else {
-                            AccountSelectorChips(
-                                accounts = availableAccounts,
-                                selectedId = selectedAccountId,
-                                onSelect = { selectedAccountId = it }
-                            )
+                },
+                label = { Text(Localization.getString(Localization.Key.AMOUNT, isBn)) },
+                placeholder = { Text("0.00") },
+                prefix = {
+                    Text(
+                        text = "$currSymbol ",
+                        fontWeight = FontWeight.Bold,
+                        color = when (selectedType) {
+                            TransactionType.EXPENSE -> ExpenseRed
+                            TransactionType.INCOME -> IncomeGreen
+                            TransactionType.TRANSFER -> TransferBlue
                         }
+                    )
+                },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("dialog_amount_input")
+            )
 
-                        Spacer(modifier = Modifier.height(16.dp))
-
-                        // Category Grid Selector
-                        Text(
-                            text = Localization.getString(Localization.Key.CATEGORY, isBn),
-                            style = MaterialTheme.typography.titleSmall,
-                            fontWeight = FontWeight.Bold
-                        )
-                        Spacer(modifier = Modifier.height(8.dp))
-
-                        if (pageCategories.isEmpty()) {
-                            Surface(
-                                shape = RoundedCornerShape(12.dp),
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .padding(vertical = 8.dp)
-                                    .clickable { viewModel.ensureDefaultData() }
-                            ) {
-                                Row(
-                                    modifier = Modifier.padding(12.dp),
-                                    verticalAlignment = Alignment.CenterVertically
-                                ) {
-                                    Icon(
-                                        imageVector = Icons.Default.Receipt,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.primary,
-                                        modifier = Modifier.size(24.dp)
-                                    )
-                                    Spacer(modifier = Modifier.width(10.dp))
-                                    Text(
-                                        text = if (isBn) "ক্যাটাগরি লোড করতে ট্যাপ করুন" else "Tap to reload categories",
-                                        style = MaterialTheme.typography.bodyMedium,
-                                        fontWeight = FontWeight.Bold
-                                    )
-                                }
-                            }
-                        } else {
-                            CategoryGridSelector(
-                                categories = pageCategories,
-                                selectedCategoryId = currentSelectedCategoryId,
-                                isBangla = isBn,
-                                onSelect = { catId ->
-                                    if (pageType == TransactionType.EXPENSE) {
-                                        selectedExpenseCategoryId = catId
-                                    } else {
-                                        selectedIncomeCategoryId = catId
-                                    }
-                                }
-                            )
-                        }
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Date & Time Display
+            // Quick Add Amount Chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                listOf(50, 100, 500, 1000, 5000).forEach { quickVal ->
                     Surface(
                         modifier = Modifier
-                            .fillMaxWidth()
-                            .clip(RoundedCornerShape(12.dp)),
+                            .weight(1f)
+                            .clip(RoundedCornerShape(8.dp))
+                            .clickable {
+                                val currentVal = amountText.toDoubleOrNull() ?: 0.0
+                                val nextVal = currentVal + quickVal
+                                amountText = if (nextVal % 1.0 == 0.0) nextVal.toLong().toString() else nextVal.toString()
+                                errorMessage = null
+                            },
+                        color = MaterialTheme.colorScheme.surfaceVariant
+                    ) {
+                        Box(
+                            modifier = Modifier.padding(vertical = 6.dp),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = "+$quickVal",
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Account Selection
+            if (selectedType == TransactionType.TRANSFER) {
+                Text(
+                    text = Localization.getString(Localization.Key.FROM_ACCOUNT, isBn),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                AccountSelectorChips(
+                    accounts = availableAccounts,
+                    selectedId = selectedAccountId,
+                    onSelect = { selectedAccountId = it }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Text(
+                    text = Localization.getString(Localization.Key.TO_ACCOUNT, isBn),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                AccountSelectorChips(
+                    accounts = availableAccounts,
+                    selectedId = selectedToAccountId,
+                    onSelect = { selectedToAccountId = it }
+                )
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                OutlinedTextField(
+                    value = feeText,
+                    onValueChange = { feeText = it },
+                    label = { Text(Localization.getString(Localization.Key.FEE, isBn)) },
+                    placeholder = { Text("0.00") },
+                    prefix = { Text("$currSymbol ", fontWeight = FontWeight.SemiBold) },
+                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+            } else {
+                Text(
+                    text = Localization.getString(Localization.Key.ACCOUNT, isBn),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
+                if (availableAccounts.isEmpty()) {
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
                         color = MaterialTheme.colorScheme.surfaceVariant,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
+                            .clickable { viewModel.ensureDefaultData() }
                     ) {
                         Row(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(14.dp),
+                            modifier = Modifier.padding(10.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             Icon(
-                                imageVector = Icons.Default.CalendarToday,
+                                imageVector = Icons.Default.Receipt,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.primary,
                                 modifier = Modifier.size(20.dp)
                             )
-                            Spacer(modifier = Modifier.width(10.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
                             Text(
-                                text = Formatters.formatDateTime(dateTimestamp, isBn),
-                                style = MaterialTheme.typography.bodyMedium,
-                                fontWeight = FontWeight.Medium
+                                text = if (isBn) "ডিফল্ট অ্যাকাউন্ট তৈরি করতে ট্যাপ করুন" else "Tap to seed default accounts",
+                                style = MaterialTheme.typography.bodySmall,
+                                fontWeight = FontWeight.Bold
                             )
                         }
                     }
-
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    // Note field
-                    OutlinedTextField(
-                        value = note,
-                        onValueChange = { note = it },
-                        label = { Text(Localization.getString(Localization.Key.NOTE, isBn)) },
-                        leadingIcon = { Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null) },
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("dialog_note_input")
+                } else {
+                    AccountSelectorChips(
+                        accounts = availableAccounts,
+                        selectedId = selectedAccountId,
+                        onSelect = { selectedAccountId = it }
                     )
+                }
+            }
 
-                    Spacer(modifier = Modifier.height(12.dp))
+            // Compact Category Selection via ExposedDropdownMenuBox
+            if (selectedType != TransactionType.TRANSFER) {
+                Spacer(modifier = Modifier.height(12.dp))
+                Text(
+                    text = Localization.getString(Localization.Key.CATEGORY, isBn),
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+                Spacer(modifier = Modifier.height(4.dp))
 
-                    // Receipt photo attachment
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        TextButton(
-                            onClick = {
-                                photoPickerLauncher.launch(
-                                    PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                val typeCategories = remember(categories, selectedType) {
+                    categories.filter { it.type == selectedType }
+                }
+                val selectedCatId = if (selectedType == TransactionType.EXPENSE) selectedExpenseCategoryId else selectedIncomeCategoryId
+                val currentCategory = categories.firstOrNull { it.id == selectedCatId }
+
+                ExposedDropdownMenuBox(
+                    expanded = categoryDropdownExpanded,
+                    onExpandedChange = { categoryDropdownExpanded = !categoryDropdownExpanded }
+                ) {
+                    OutlinedTextField(
+                        value = currentCategory?.localizedName(isBn) ?: (if (isBn) "ক্যাটাগরি নির্বাচন করুন" else "Select Category"),
+                        onValueChange = {},
+                        readOnly = true,
+                        leadingIcon = {
+                            if (currentCategory != null) {
+                                CategoryIconBadge(
+                                    iconName = currentCategory.iconName,
+                                    colorHex = currentCategory.colorHex,
+                                    size = 28.dp,
+                                    iconSize = 16.dp
+                                )
+                            } else {
+                                Icon(
+                                    imageVector = Icons.Default.Receipt,
+                                    contentDescription = null,
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(20.dp)
                                 )
                             }
-                        ) {
-                            Icon(Icons.Default.AddAPhoto, contentDescription = null, modifier = Modifier.size(18.dp))
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(Localization.getString(Localization.Key.RECEIPT, isBn), fontWeight = FontWeight.Bold)
-                        }
+                        },
+                        trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = categoryDropdownExpanded) },
+                        modifier = Modifier
+                            .menuAnchor(MenuAnchorType.PrimaryNotEditable)
+                            .fillMaxWidth()
+                            .testTag("dialog_category_dropdown"),
+                        shape = RoundedCornerShape(12.dp)
+                    )
 
-                        if (receiptUriStr != null) {
-                            IconButton(onClick = { receiptUriStr = null }) {
-                                Icon(Icons.Default.Close, contentDescription = "Remove receipt", tint = ExpenseRed)
-                            }
+                    ExposedDropdownMenu(
+                        expanded = categoryDropdownExpanded,
+                        onDismissRequest = { categoryDropdownExpanded = false }
+                    ) {
+                        typeCategories.forEach { cat ->
+                            DropdownMenuItem(
+                                text = { Text(cat.localizedName(isBn), fontWeight = FontWeight.Medium) },
+                                leadingIcon = {
+                                    CategoryIconBadge(
+                                        iconName = cat.iconName,
+                                        colorHex = cat.colorHex,
+                                        size = 28.dp,
+                                        iconSize = 16.dp
+                                    )
+                                },
+                                onClick = {
+                                    if (selectedType == TransactionType.EXPENSE) {
+                                        selectedExpenseCategoryId = cat.id
+                                    } else {
+                                        selectedIncomeCategoryId = cat.id
+                                    }
+                                    categoryDropdownExpanded = false
+                                }
+                            )
                         }
                     }
+                }
+            }
 
-                    if (receiptUriStr != null) {
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Date & Time Picker Section (CHANGEABLE)
+            Text(
+                text = Localization.getString(Localization.Key.DATE, isBn),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(modifier = Modifier.height(4.dp))
+
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(12.dp))
+                    .clickable { showDatePicker = true }
+                    .testTag("dialog_date_button"),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarToday,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                        Spacer(modifier = Modifier.width(10.dp))
+                        Text(
+                            text = Formatters.formatDateTime(dateTimestamp, isBn),
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Text(
+                        text = if (isBn) "পরিবর্তন করুন" else "Change",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary
+                    )
+                }
+            }
+
+            // Quick date shortcut chips
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 6.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { dateTimestamp = System.currentTimeMillis() }
+                ) {
+                    Text(
+                        text = if (isBn) "আজকে" else "Today",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant,
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { dateTimestamp = System.currentTimeMillis() - 86400000L }
+                ) {
+                    Text(
+                        text = if (isBn) "গতকাল" else "Yesterday",
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+                    modifier = Modifier
+                        .clip(RoundedCornerShape(8.dp))
+                        .clickable { showDatePicker = true }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CalendarToday,
+                            contentDescription = null,
+                            modifier = Modifier.size(12.dp),
+                            tint = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isBn) "তারিখ বাছুন" else "Select Date",
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = MaterialTheme.colorScheme.onPrimaryContainer
+                        )
+                    }
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Note Field
+            OutlinedTextField(
+                value = note,
+                onValueChange = { note = it },
+                label = { Text(Localization.getString(Localization.Key.NOTE, isBn)) },
+                leadingIcon = { Icon(Icons.AutoMirrored.Filled.Notes, contentDescription = null) },
+                singleLine = true,
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("dialog_note_input")
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+
+            // Receipt Photo Attachment (Compact)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                TextButton(
+                    onClick = {
+                        photoPickerLauncher.launch(
+                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                        )
+                    },
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp)
+                ) {
+                    Icon(Icons.Default.AddAPhoto, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = if (receiptUriStr != null) {
+                            if (isBn) "রসিদের ছবি পরিবর্তন" else "Change Receipt"
+                        } else {
+                            Localization.getString(Localization.Key.RECEIPT, isBn)
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                if (receiptUriStr != null) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
                         AsyncImage(
                             model = receiptUriStr,
                             contentDescription = "Receipt Image",
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
-                                .fillMaxWidth()
-                                .height(140.dp)
-                                .clip(RoundedCornerShape(12.dp))
+                                .size(38.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
                         )
-                        Spacer(modifier = Modifier.height(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        IconButton(
+                            onClick = { receiptUriStr = null },
+                            modifier = Modifier.size(32.dp)
+                        ) {
+                            Icon(
+                                Icons.Default.Close,
+                                contentDescription = "Remove receipt",
+                                tint = ExpenseRed,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
-
-                    val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
-                    val currentBalance = selectedAccountWithBal?.balance ?: 0.0
-                    val amountVal = amountText.toDoubleOrNull() ?: 0.0
-                    val feeVal = feeText.toDoubleOrNull() ?: 0.0
-
-                    val resultingBalance = when (pageType) {
-                        TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
-                        TransactionType.INCOME -> currentBalance + amountVal
-                        TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
-                    }
-
-                    val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
-                    val targetCurrentBalance = targetAccountWithBal?.balance
-                    val resultingTargetBalance = if (targetCurrentBalance != null) {
-                        targetCurrentBalance + amountVal
-                    } else null
-
-                    TransactionBalancePreviewCard(
-                        transactionType = pageType,
-                        currentBalance = currentBalance,
-                        resultingBalance = resultingBalance,
-                        targetCurrentBalance = targetCurrentBalance,
-                        resultingTargetBalance = resultingTargetBalance,
-                        currencySymbol = currSymbol,
-                        isBn = isBn,
-                        accountName = selectedAccountWithBal?.account?.name,
-                        targetAccountName = targetAccountWithBal?.account?.name,
-                        amount = amountVal
-                    )
-                    Spacer(modifier = Modifier.height(12.dp))
-
-                    if (errorMessage != null) {
-                        Text(
-                            text = errorMessage!!,
-                            color = MaterialTheme.colorScheme.error,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(bottom = 8.dp)
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
-
-                    // Save Button
-                    Button(
-                        onClick = { handleSave(pageType) },
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(52.dp)
-                            .testTag("dialog_save_tx_btn"),
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = when (pageType) {
-                                TransactionType.EXPENSE -> ExpenseRed
-                                TransactionType.INCOME -> IncomeGreen
-                                TransactionType.TRANSFER -> TransferBlue
-                            },
-                            contentColor = Color.White
-                        )
-                    ) {
-                        Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text(
-                            text = Localization.getString(Localization.Key.SAVE, isBn),
-                            fontSize = 16.sp,
-                            fontWeight = FontWeight.Bold,
-                            color = Color.White
-                        )
-                    }
-
-                    Spacer(modifier = Modifier.height(16.dp))
                 }
             }
+
+            // Balance Preview Card (compact, shown when amount > 0)
+            val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
+            val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+            val amountVal = amountText.toDoubleOrNull() ?: 0.0
+            val feeVal = feeText.toDoubleOrNull() ?: 0.0
+
+            if (amountVal > 0.0) {
+                Spacer(modifier = Modifier.height(10.dp))
+                val resultingBalance = when (selectedType) {
+                    TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
+                    TransactionType.INCOME -> currentBalance + amountVal
+                    TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
+                }
+
+                val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
+                val targetCurrentBalance = targetAccountWithBal?.balance
+                val resultingTargetBalance = if (targetCurrentBalance != null) {
+                    targetCurrentBalance + amountVal
+                } else null
+
+                TransactionBalancePreviewCard(
+                    transactionType = selectedType,
+                    currentBalance = currentBalance,
+                    resultingBalance = resultingBalance,
+                    targetCurrentBalance = targetCurrentBalance,
+                    resultingTargetBalance = resultingTargetBalance,
+                    currencySymbol = currSymbol,
+                    isBn = isBn,
+                    accountName = selectedAccountWithBal?.account?.name,
+                    targetAccountName = targetAccountWithBal?.account?.name,
+                    amount = amountVal
+                )
+            }
+
+            if (errorMessage != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = errorMessage!!,
+                    color = MaterialTheme.colorScheme.error,
+                    style = MaterialTheme.typography.bodySmall,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.height(18.dp))
+
+            // Action Buttons: Cancel and Save (compact row, consistent with recurring sheet)
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                TextButton(
+                    onClick = { closeSheet() },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Text(Localization.getString(Localization.Key.CANCEL, isBn))
+                }
+
+                Spacer(modifier = Modifier.width(10.dp))
+
+                Button(
+                    onClick = { handleSave(selectedType) },
+                    modifier = Modifier
+                        .testTag("dialog_save_tx_btn")
+                        .height(44.dp),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = when (selectedType) {
+                            TransactionType.EXPENSE -> ExpenseRed
+                            TransactionType.INCOME -> IncomeGreen
+                            TransactionType.TRANSFER -> TransferBlue
+                        },
+                        contentColor = Color.White
+                    )
+                ) {
+                    Icon(
+                        Icons.Default.Check,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = Localization.getString(Localization.Key.SAVE, isBn),
+                        fontSize = 15.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White
+                    )
+                }
+            }
+
+            Spacer(modifier = Modifier.height(12.dp))
         }
     }
 }
