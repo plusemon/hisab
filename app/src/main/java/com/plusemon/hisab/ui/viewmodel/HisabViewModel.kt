@@ -28,6 +28,7 @@ import com.plusemon.hisab.data.model.YearMonth
 import com.plusemon.hisab.data.model.UpdateInfo
 import com.plusemon.hisab.data.repository.AuthRepository
 import com.plusemon.hisab.data.repository.AuthResult
+import com.plusemon.hisab.data.repository.CloudRestoreSummary
 import com.plusemon.hisab.data.repository.FirestoreRepository
 import com.plusemon.hisab.data.repository.FirestoreRepositoryImpl
 import com.plusemon.hisab.data.repository.HisabRepository
@@ -50,6 +51,13 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+sealed class RestoreUiState {
+    object Idle : RestoreUiState()
+    data class Restoring(val step: String, val progress: Float) : RestoreUiState()
+    data class Completed(val summary: CloudRestoreSummary) : RestoreUiState()
+    data class Error(val message: String) : RestoreUiState()
+}
 
 sealed class UpdateUiState {
     object Idle : UpdateUiState()
@@ -99,6 +107,13 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _updateUiState = MutableStateFlow<UpdateUiState>(UpdateUiState.Idle)
     val updateUiState = _updateUiState.asStateFlow()
+
+    private val _restoreUiState = MutableStateFlow<RestoreUiState>(RestoreUiState.Idle)
+    val restoreUiState: StateFlow<RestoreUiState> = _restoreUiState.asStateFlow()
+
+    fun dismissRestoreDialog() {
+        _restoreUiState.value = RestoreUiState.Idle
+    }
 
     private val _appSyncStatus = MutableStateFlow<AppSyncStatus>(AppSyncStatus.Synced())
     val appSyncStatus = _appSyncStatus.asStateFlow()
@@ -249,12 +264,8 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             authRepository.currentUser.collect { user ->
                 cancelUserJobs()
                 if (user != null) {
-                    authRepository.ensureUserDataSeeded(user.id)
                     observeUserData(user.id)
-                    // Auto-process recurring rules on login/open
-                    hisabRepository.processRecurringTransactions(user.id)
-                    // Background sync with Firestore to prevent data loss across devices/restarts
-                    syncWithFirestore(user.id)
+                    checkAndTriggerCloudRestoreOrSeed(user.id)
                 } else {
                     resetUserData()
                 }
@@ -351,6 +362,82 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 )
             } finally {
                 _appSyncStatus.value = AppSyncStatus.Synced()
+            }
+        }
+    }
+
+    private fun checkAndTriggerCloudRestoreOrSeed(userId: String) {
+        viewModelScope.launch {
+            val localAccCount = withContext(Dispatchers.IO) { db.accountDao().getAccountCount(userId) }
+            val localTxCount = withContext(Dispatchers.IO) { db.transactionDao().getAllTransactionsList(userId).size }
+
+            if (localAccCount == 0 && localTxCount == 0) {
+                // If local database has no data (e.g. app data was cleared or first login on device)
+                val hasCloud = firestoreRepository.checkHasCloudData(userId).getOrDefault(false)
+                if (hasCloud) {
+                    // Cloud data exists! Launch interactive restoration dialog
+                    triggerRestoreFromCloud(userId, isManual = false)
+                } else {
+                    // Truly brand new user with no existing cloud records:
+                    // Seed initial starter accounts & categories
+                    authRepository.ensureUserDataSeeded(userId)
+                    hisabRepository.processRecurringTransactions(userId)
+                }
+            } else {
+                // Normal app start with existing local records:
+                hisabRepository.processRecurringTransactions(userId)
+                syncWithFirestore(userId)
+            }
+        }
+    }
+
+    fun triggerRestoreFromCloud(targetUserId: String? = null, isManual: Boolean = true) {
+        val uid = targetUserId ?: currentUser.value?.id ?: return
+        viewModelScope.launch {
+            val isBn = _settings.value.language == "bn"
+            _restoreUiState.value = RestoreUiState.Restoring(
+                step = if (isBn) "ক্লাউড ব্যাকআপ অনুসন্ধান করা হচ্ছে..." else "Searching for cloud backup...",
+                progress = 0.08f
+            )
+            try {
+                val result = firestoreRepository.restoreCloudUserData(uid) { step, progress ->
+                    _restoreUiState.value = RestoreUiState.Restoring(step = step, progress = progress)
+                }
+                if (result.isSuccess) {
+                    val summary = result.getOrNull() ?: CloudRestoreSummary()
+                    if (summary.totalRecords > 0 || summary.hasCloudData || summary.settingsRestored) {
+                        _restoreUiState.value = RestoreUiState.Completed(summary)
+                        refreshMonthlyData(uid)
+                        hisabRepository.processRecurringTransactions(uid)
+                    } else if (isManual) {
+                        _restoreUiState.value = RestoreUiState.Error(
+                            if (isBn) "কোনো ক্লাউড ব্যাকআপ পাওয়া যায়নি।" else "No cloud backup found for this account."
+                        )
+                    } else {
+                        // In auto-mode with empty cloud: seed starter accounts
+                        authRepository.ensureUserDataSeeded(uid)
+                        _restoreUiState.value = RestoreUiState.Idle
+                    }
+                } else {
+                    val errorMsg = result.exceptionOrNull()?.localizedMessage ?: "Unknown error"
+                    if (isManual) {
+                        _restoreUiState.value = RestoreUiState.Error(
+                            if (isBn) "ক্লাউড রিস্টোর সম্পন্ন করা যায়নি: $errorMsg" else "Cloud restore failed: $errorMsg"
+                        )
+                    } else {
+                        authRepository.ensureUserDataSeeded(uid)
+                        _restoreUiState.value = RestoreUiState.Idle
+                    }
+                }
+            } catch (e: Exception) {
+                if (isManual) {
+                    _restoreUiState.value = RestoreUiState.Error(
+                        e.localizedMessage ?: "Restoration failed"
+                    )
+                } else {
+                    authRepository.ensureUserDataSeeded(uid)
+                    _restoreUiState.value = RestoreUiState.Idle
+                }
             }
         }
     }

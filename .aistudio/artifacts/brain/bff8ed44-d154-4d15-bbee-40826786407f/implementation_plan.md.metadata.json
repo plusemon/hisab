@@ -1,6 +1,6 @@
 {
-  "summary": "Complete Cloud Sync & Restore Architecture Plan for Hisab, covering all user financial entities (Transactions, Accounts, Categories, Budgets, Savings Goals, Loans/Debts, Shop Credit, Recurring Rules) and user preferences (language, numeral system, currency, theme, PIN settings), with cloud-priority restoration on login and instant real-time sync.",
-  "updatedAt": "2026-10-14T03:45:21.822083416Z",
+  "summary": "Comprehensive implementation plan to resolve data restoration after clearing app data. Decouples restoration from the login page for rapid authentication, introduces an interactive post-login Cloud Restoration Dialog with live progress and summary, implements cloud-priority merging, and adds a manual restore trigger in Settings.",
+  "updatedAt": "2026-10-16T20:14:51.763978479Z",
   "requestFeedback": true,
   "userFacing": true
 }

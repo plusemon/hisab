@@ -314,4 +314,35 @@ class ExampleRobolectricTest {
     assertEquals("সিস্টেম ডিফল্ট", sysBn)
     assertEquals("System Default", sysEn)
   }
+
+  @Test
+  fun `cloud restore summary calculates total records accurately`() {
+    val summary = com.plusemon.hisab.data.repository.CloudRestoreSummary(
+      accountsCount = 4,
+      transactionsCount = 42,
+      categoriesCount = 12,
+      budgetsCount = 3,
+      goalsCount = 2,
+      debtsCount = 1,
+      hasCloudData = true
+    )
+    assertEquals(64, summary.totalRecords)
+    assertTrue(summary.hasCloudData)
+  }
+
+  @Test
+  fun `restore ui state representations and transitions`() {
+    val idle = com.plusemon.hisab.ui.viewmodel.RestoreUiState.Idle
+    assertTrue(idle is com.plusemon.hisab.ui.viewmodel.RestoreUiState)
+
+    val restoring = com.plusemon.hisab.ui.viewmodel.RestoreUiState.Restoring("Restoring accounts...", 0.25f)
+    assertEquals("Restoring accounts...", restoring.step)
+    assertEquals(0.25f, restoring.progress, 0.001f)
+
+    val completed = com.plusemon.hisab.ui.viewmodel.RestoreUiState.Completed(
+      com.plusemon.hisab.data.repository.CloudRestoreSummary(accountsCount = 2, transactionsCount = 10, hasCloudData = true)
+    )
+    assertEquals(12, completed.summary.totalRecords)
+  }
 }
+

@@ -128,13 +128,11 @@ class AuthRepository(
                     }
                 }
             }
-            ensureUserDataSeeded(user.id)
             saveSession(user)
         } else {
             val cached = _currentUser.value
             if (cached != null) {
                 userDao.insertUser(cached)
-                ensureUserDataSeeded(cached.id)
                 saveSession(cached)
             } else {
                 _currentUser.value = null
@@ -167,7 +165,6 @@ class AuthRepository(
                     isGoogleUser = true
                 )
                 userDao.insertUser(user)
-                ensureUserDataSeeded(userId)
             } else {
                 // Update photo / name if needed, ALWAYS preserve existing user.id to maintain foreign keys
                 val updated = user.copy(
@@ -176,7 +173,6 @@ class AuthRepository(
                 )
                 userDao.updateUser(updated)
                 user = updated
-                ensureUserDataSeeded(user.id)
             }
 
             // Sync user document to Firestore with real uid and email
@@ -226,7 +222,6 @@ class AuthRepository(
             return@withContext AuthResult.Error("Incorrect password. Please verify and try again.")
         }
 
-        ensureUserDataSeeded(user.id)
         saveSession(user)
         AuthResult.Success(user)
     }
@@ -258,7 +253,6 @@ class AuthRepository(
             passwordHash = hashPassword(pass)
         )
         userDao.insertUser(user)
-        ensureUserDataSeeded(newId)
 
         saveSession(user)
         AuthResult.Success(user)
@@ -267,25 +261,6 @@ class AuthRepository(
     suspend fun ensureUserDataSeeded(userId: String) = withContext(Dispatchers.IO) {
         val accCount = accountDao.getAccountCount(userId)
         if (accCount == 0) {
-            // Check if remote cloud data exists first!
-            var hasRestoredCloudData = false
-            if (firestoreRepository != null) {
-                try {
-                    val restoreResult = firestoreRepository.restoreCloudUserData(userId)
-                    if (restoreResult.isSuccess && restoreResult.getOrNull() == true) {
-                        hasRestoredCloudData = true
-                        Log.i("AuthRepository", "Remote cloud data cleanly restored for user $userId")
-                    }
-                } catch (e: Exception) {
-                    Log.w("AuthRepository", "Cloud restore attempt during seed check: ${e.message}")
-                }
-            }
-
-            // If remote data was found and restored, we don't inject default starter accounts/categories
-            if (hasRestoredCloudData || accountDao.getAccountCount(userId) > 0) {
-                return@withContext
-            }
-
             // Genuinely brand new user with no existing cloud or local records:
             // 1. Seed Accounts
             val defaultAccounts = listOf(

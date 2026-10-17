@@ -75,9 +75,35 @@ interface FirestoreRepository {
     suspend fun saveUserSettings(userId: String, settings: UserSettings): Result<Unit>
     suspend fun fetchUserSettings(userId: String): Result<UserSettings?>
 
+    suspend fun checkHasCloudData(userId: String): Result<Boolean>
+    suspend fun restoreCloudUserData(
+        userId: String,
+        onProgress: ((step: String, progress: Float) -> Unit)? = null
+    ): Result<CloudRestoreSummary>
     suspend fun restoreCloudUserData(userId: String): Result<Boolean>
     suspend fun syncAllWithRoom(userId: String): Result<Int>
     fun observeRemoteTransactions(userId: String): Flow<List<TransactionRecord>>
+}
+
+data class CloudRestoreSummary(
+    val accountsCount: Int = 0,
+    val transactionsCount: Int = 0,
+    val categoriesCount: Int = 0,
+    val budgetsCount: Int = 0,
+    val goalsCount: Int = 0,
+    val debtsCount: Int = 0,
+    val repaymentsCount: Int = 0,
+    val vendorsCount: Int = 0,
+    val shopPurchasesCount: Int = 0,
+    val shopPaymentsCount: Int = 0,
+    val recurringCount: Int = 0,
+    val settingsRestored: Boolean = false,
+    val hasCloudData: Boolean = false
+) {
+    val totalRecords: Int
+        get() = accountsCount + transactionsCount + categoriesCount + budgetsCount +
+                goalsCount + debtsCount + repaymentsCount + vendorsCount +
+                shopPurchasesCount + shopPaymentsCount + recurringCount
 }
 
 class FirestoreRepositoryImpl(
@@ -856,13 +882,43 @@ class FirestoreRepositoryImpl(
         }
     }
 
-    // --- Cloud-Priority Restoration on Login ---
+    // --- Cloud Detection & Restoration ---
 
-    override suspend fun restoreCloudUserData(userId: String): Result<Boolean> = withContext(Dispatchers.IO) {
+    override suspend fun checkHasCloudData(userId: String): Result<Boolean> = withContext(Dispatchers.IO) {
         val firestore = getFirestore() ?: return@withContext Result.failure(
             IllegalStateException("Firebase is not initialized")
         )
         try {
+            val userDocRef = firestore.collection(COLLECTION_USERS).document(userId)
+
+            val accountsSnap = userDocRef.collection(COLLECTION_ACCOUNTS).limit(1).get().awaitTask(4000L)
+            if (!accountsSnap.isEmpty) return@withContext Result.success(true)
+
+            val txSnap = userDocRef.collection(COLLECTION_TRANSACTIONS).limit(1).get().awaitTask(4000L)
+            if (!txSnap.isEmpty) return@withContext Result.success(true)
+
+            val catSnap = userDocRef.collection(COLLECTION_CATEGORIES).limit(1).get().awaitTask(4000L)
+            if (!catSnap.isEmpty) return@withContext Result.success(true)
+
+            val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(3000L)
+            if (settingsDoc.exists()) return@withContext Result.success(true)
+
+            Result.success(false)
+        } catch (e: Exception) {
+            Log.w(TAG, "checkHasCloudData check failed: ${e.message}")
+            Result.failure(e)
+        }
+    }
+
+    override suspend fun restoreCloudUserData(
+        userId: String,
+        onProgress: ((step: String, progress: Float) -> Unit)?
+    ): Result<CloudRestoreSummary> = withContext(Dispatchers.IO) {
+        val firestore = getFirestore() ?: return@withContext Result.failure(
+            IllegalStateException("Firebase is not initialized")
+        )
+        try {
+            onProgress?.invoke("Connecting to cloud backup...", 0.08f)
             val userDocRef = firestore.collection(COLLECTION_USERS).document(userId)
 
             val remoteAccountsSnap = userDocRef.collection(COLLECTION_ACCOUNTS).get().awaitTask(6000L)
@@ -875,11 +931,12 @@ class FirestoreRepositoryImpl(
                 val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(4000L)
                 if (!settingsDoc.exists()) {
                     Log.i(TAG, "No cloud data found for user $userId (new user)")
-                    return@withContext Result.success(false)
+                    return@withContext Result.success(CloudRestoreSummary(hasCloudData = false))
                 }
             }
 
             Log.i(TAG, "Restoring cloud data for user $userId...")
+            onProgress?.invoke("Restoring accounts and balances...", 0.18f)
 
             // 1. Restore Accounts
             val remoteAccounts = remoteAccountsSnap.documents.mapNotNull { doc ->
@@ -908,8 +965,14 @@ class FirestoreRepositoryImpl(
                 )
             }
             if (remoteAccounts.isNotEmpty()) {
+                val localTxCount = transactionDao.getAllTransactionsList(userId).size
+                if (localTxCount == 0) {
+                    accountDao.deleteAllAccountsForUser(userId)
+                }
                 accountDao.insertAccounts(remoteAccounts)
             }
+
+            onProgress?.invoke("Restoring categories...", 0.30f)
 
             // 2. Restore Categories
             val remoteCategories = remoteCategoriesSnap.documents.mapNotNull { doc ->
@@ -936,8 +999,14 @@ class FirestoreRepositoryImpl(
                 )
             }
             if (remoteCategories.isNotEmpty()) {
+                val localTxCount = transactionDao.getAllTransactionsList(userId).size
+                if (localTxCount == 0) {
+                    categoryDao.deleteAllCategoriesForUser(userId)
+                }
                 categoryDao.insertCategories(remoteCategories)
             }
+
+            onProgress?.invoke("Restoring transactions...", 0.50f)
 
             // 3. Restore Transactions (full collection)
             val fullTxSnap = userDocRef.collection(COLLECTION_TRANSACTIONS).get().awaitTask(8000L)
@@ -980,7 +1049,10 @@ class FirestoreRepositoryImpl(
                 transactionDao.insertTransactions(remoteTransactions)
             }
 
+            onProgress?.invoke("Restoring budgets and savings goals...", 0.68f)
+
             // 4. Restore Budgets
+            var budgetsCount = 0
             try {
                 val budgetSnap = userDocRef.collection(COLLECTION_BUDGETS).get().awaitTask(5000L)
                 val budgets = budgetSnap.documents.mapNotNull { doc ->
@@ -998,12 +1070,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (budgets.isNotEmpty()) {
                     budgetDao.insertBudgets(budgets)
+                    budgetsCount = budgets.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring budgets failed: ${e.message}")
             }
 
             // 5. Restore Savings Goals
+            var goalsCount = 0
             try {
                 val goalSnap = userDocRef.collection(COLLECTION_SAVINGS_GOALS).get().awaitTask(5000L)
                 val goals = goalSnap.documents.mapNotNull { doc ->
@@ -1033,12 +1107,16 @@ class FirestoreRepositoryImpl(
                 }
                 if (goals.isNotEmpty()) {
                     savingsGoalDao.insertGoals(goals)
+                    goalsCount = goals.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring savings goals failed: ${e.message}")
             }
 
+            onProgress?.invoke("Restoring loans, debts and shops...", 0.82f)
+
             // 6. Restore Contacts
+            var contactsCount = 0
             try {
                 val contactSnap = userDocRef.collection(COLLECTION_CONTACTS).get().awaitTask(5000L)
                 val contacts = contactSnap.documents.mapNotNull { doc ->
@@ -1056,12 +1134,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (contacts.isNotEmpty()) {
                     contactDao.insertContacts(contacts)
+                    contactsCount = contacts.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring contacts failed: ${e.message}")
             }
 
             // 7. Restore Loans & Debts
+            var debtsCount = 0
             try {
                 val debtSnap = userDocRef.collection(COLLECTION_LOANS_DEBTS).get().awaitTask(5000L)
                 val debts = debtSnap.documents.mapNotNull { doc ->
@@ -1098,12 +1178,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (debts.isNotEmpty()) {
                     loanDebtDao.insertDebts(debts)
+                    debtsCount = debts.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring loans & debts failed: ${e.message}")
             }
 
             // 8. Restore Loan Repayments
+            var repaymentsCount = 0
             try {
                 val repaymentSnap = userDocRef.collection(COLLECTION_LOAN_REPAYMENTS).get().awaitTask(5000L)
                 val repayments = repaymentSnap.documents.mapNotNull { doc ->
@@ -1127,12 +1209,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (repayments.isNotEmpty()) {
                     loanRepaymentDao.insertRepayments(repayments)
+                    repaymentsCount = repayments.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring repayments failed: ${e.message}")
             }
 
             // 9. Restore Vendors
+            var vendorsCount = 0
             try {
                 val vendorSnap = userDocRef.collection(COLLECTION_VENDORS).get().awaitTask(5000L)
                 val vendors = vendorSnap.documents.mapNotNull { doc ->
@@ -1156,12 +1240,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (vendors.isNotEmpty()) {
                     vendorDao.insertVendors(vendors)
+                    vendorsCount = vendors.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring vendors failed: ${e.message}")
             }
 
             // 10. Restore Shop Credit Purchases
+            var shopPurchasesCount = 0
             try {
                 val purchaseSnap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PURCHASES).get().awaitTask(5000L)
                 val purchases = purchaseSnap.documents.mapNotNull { doc ->
@@ -1187,12 +1273,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (purchases.isNotEmpty()) {
                     shopCreditPurchaseDao.insertPurchases(purchases)
+                    shopPurchasesCount = purchases.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring purchases failed: ${e.message}")
             }
 
             // 11. Restore Shop Credit Payments
+            var shopPaymentsCount = 0
             try {
                 val paymentSnap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PAYMENTS).get().awaitTask(5000L)
                 val payments = paymentSnap.documents.mapNotNull { doc ->
@@ -1216,12 +1304,14 @@ class FirestoreRepositoryImpl(
                 }
                 if (payments.isNotEmpty()) {
                     shopCreditPaymentDao.insertPayments(payments)
+                    shopPaymentsCount = payments.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring payments failed: ${e.message}")
             }
 
             // 12. Restore Recurring Rules
+            var recurringCount = 0
             try {
                 val ruleSnap = userDocRef.collection(COLLECTION_RECURRING_RULES).get().awaitTask(5000L)
                 val rules = ruleSnap.documents.mapNotNull { doc ->
@@ -1255,12 +1345,16 @@ class FirestoreRepositoryImpl(
                 }
                 if (rules.isNotEmpty()) {
                     recurringDao.insertRules(rules)
+                    recurringCount = rules.size
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring recurring rules failed: ${e.message}")
             }
 
+            onProgress?.invoke("Applying settings and preferences...", 0.94f)
+
             // 13. Restore User Preferences / Settings
+            var settingsRestored = false
             try {
                 val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(4000L)
                 if (settingsDoc.exists()) {
@@ -1297,16 +1391,43 @@ class FirestoreRepositoryImpl(
                         .putBoolean("is_dark_mode", dark)
                         .putBoolean("use_system_theme", systemTheme)
                         .apply()
+                    settingsRestored = true
                 }
             } catch (e: Exception) {
                 Log.w(TAG, "Restoring user settings failed: ${e.message}")
             }
 
+            onProgress?.invoke("Restoration complete!", 1.0f)
             Log.i(TAG, "Successfully restored all cloud data for user $userId")
-            Result.success(true)
+
+            val summary = CloudRestoreSummary(
+                accountsCount = remoteAccounts.size,
+                transactionsCount = remoteTransactions.size,
+                categoriesCount = remoteCategories.size,
+                budgetsCount = budgetsCount,
+                goalsCount = goalsCount,
+                debtsCount = debtsCount,
+                repaymentsCount = repaymentsCount,
+                vendorsCount = vendorsCount,
+                shopPurchasesCount = shopPurchasesCount,
+                shopPaymentsCount = shopPaymentsCount,
+                recurringCount = recurringCount,
+                settingsRestored = settingsRestored,
+                hasCloudData = true
+            )
+            Result.success(summary)
         } catch (e: Exception) {
             Log.w(TAG, "restoreCloudUserData failed: ${e.message}", e)
             Result.failure(e)
+        }
+    }
+
+    override suspend fun restoreCloudUserData(userId: String): Result<Boolean> {
+        val result = restoreCloudUserData(userId, null)
+        return if (result.isSuccess) {
+            Result.success(result.getOrNull()?.hasCloudData == true)
+        } else {
+            Result.failure(result.exceptionOrNull() ?: Exception("Restore failed"))
         }
     }
 

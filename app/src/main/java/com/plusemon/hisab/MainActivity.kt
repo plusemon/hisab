@@ -52,6 +52,7 @@ import androidx.compose.ui.unit.dp
 import com.plusemon.hisab.data.model.TransactionType
 import com.plusemon.hisab.data.model.TransactionWithDetails
 import com.plusemon.hisab.ui.components.AddTransactionBottomSheet
+import com.plusemon.hisab.ui.components.CloudRestoreDialog
 import com.plusemon.hisab.ui.components.DashboardHeader
 import com.plusemon.hisab.ui.components.HisabBottomNav
 import com.plusemon.hisab.ui.components.PinLockScreen
@@ -251,6 +252,11 @@ fun HisabMainApp(
         },
         onEnablePermission = { viewModel.openInstallPermissionSettings() },
         onRetryInstall = { info -> viewModel.retryInstall(info) }
+    )
+
+    // Interactive Cloud Data Restoration Dialog
+    CloudRestoreDialog(
+        viewModel = viewModel
     )
 
     Scaffold(
