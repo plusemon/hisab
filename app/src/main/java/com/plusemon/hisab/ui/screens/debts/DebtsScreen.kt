@@ -81,8 +81,11 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.MenuAnchorType
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
+import com.plusemon.hisab.domain.util.ContactAvatar
 import com.plusemon.hisab.domain.util.ContactPhoneOption
+import com.plusemon.hisab.domain.util.ContactSearchDropdownField
 import com.plusemon.hisab.domain.util.ContactUtils
+import com.plusemon.hisab.domain.util.DeviceContactSuggestion
 import com.plusemon.hisab.domain.util.SelectContactPhoneDialog
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.OutlinedTextField
@@ -799,8 +802,35 @@ fun EditContactPhoneDialog(
 ) {
     val context = LocalContext.current
     var phone by remember { mutableStateOf(contact.phone) }
+    var selectedPhotoUri by remember {
+        mutableStateOf(ContactUtils.findContactPhotoUri(context, contact.name, contact.phone))
+    }
     var phoneOptionsForSelection by remember { mutableStateOf<List<ContactPhoneOption>?>(null) }
     var pendingContactName by remember { mutableStateOf("") }
+    var pendingContactPhotoUri by remember { mutableStateOf<String?>(null) }
+
+    val handleContactSelection: (String, List<ContactPhoneOption>, String?) -> Unit = { cName, phones, photoUri ->
+        if (!photoUri.isNullOrBlank()) {
+            selectedPhotoUri = photoUri
+        }
+        when {
+            phones.isEmpty() -> {
+                Toast.makeText(
+                    context,
+                    if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            phones.size == 1 -> {
+                phone = phones.first().rawNumber
+            }
+            else -> {
+                pendingContactName = cName
+                pendingContactPhotoUri = photoUri
+                phoneOptionsForSelection = phones
+            }
+        }
+    }
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -808,22 +838,7 @@ fun EditContactPhoneDialog(
         if (uri != null) {
             val result = ContactUtils.extractContact(context, uri)
             if (result != null) {
-                when {
-                    result.phones.isEmpty() -> {
-                        Toast.makeText(
-                            context,
-                            if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    result.phones.size == 1 -> {
-                        phone = result.phones.first().rawNumber
-                    }
-                    else -> {
-                        pendingContactName = result.name
-                        phoneOptionsForSelection = result.phones
-                    }
-                }
+                handleContactSelection(result.name, result.phones, result.photoUri)
             }
         }
     }
@@ -848,6 +863,7 @@ fun EditContactPhoneDialog(
             contactName = pendingContactName,
             options = phoneOptionsForSelection!!,
             isBangla = isBangla,
+            photoUri = pendingContactPhotoUri,
             onSelectPhone = { selected ->
                 phone = selected.rawNumber
                 phoneOptionsForSelection = null
@@ -866,18 +882,27 @@ fun EditContactPhoneDialog(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Text(
-                    text = if (isBangla) "ফোন নম্বর পরিবর্তন / যুক্ত করুন" else "Update Phone Number",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = contact.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ContactAvatar(
+                        name = contact.name,
+                        photoUri = selectedPhotoUri,
+                        size = 40.dp
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = if (isBangla) "ফোন নম্বর পরিবর্তন / যুক্ত করুন" else "Update Phone Number",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = contact.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -893,14 +918,18 @@ fun EditContactPhoneDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                OutlinedTextField(
+                ContactSearchDropdownField(
                     value = phone,
                     onValueChange = { phone = it },
-                    label = { Text(if (isBangla) "মোবাইল নম্বর" else "Phone Number") },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth()
+                    label = { Text(if (isBangla) "মোবাইল নম্বর বা নাম সার্চ করুন" else "Search Contact or Phone Number") },
+                    placeholder = { Text(if (isBangla) "নাম বা নম্বর লিখে সার্চ করুন..." else "Type name or number...") },
+                    isPhoneField = true,
+                    isBangla = isBangla,
+                    selectedPhotoUri = selectedPhotoUri,
+                    onPickExternalContact = onPickContact,
+                    onContactSelected = { suggestion ->
+                        handleContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                    }
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))
@@ -2307,6 +2336,13 @@ fun AddLoanEntryBottomSheet(
 
     var name by remember { mutableStateOf(contacts.find { it.id == initialContactId }?.name ?: "") }
     var phone by remember { mutableStateOf(contacts.find { it.id == initialContactId }?.phone ?: "") }
+    var selectedPhotoUri by remember {
+        mutableStateOf(
+            contacts.find { it.id == initialContactId }?.let {
+                ContactUtils.findContactPhotoUri(context, it.name, it.phone)
+            }
+        )
+    }
     var amountText by remember { mutableStateOf("") }
     var selectedAccountId by remember { mutableStateOf(accounts.firstOrNull()?.account?.id ?: 0L) }
     var note by remember { mutableStateOf("") }
@@ -2315,6 +2351,49 @@ fun AddLoanEntryBottomSheet(
 
     var phoneOptionsForSelection by remember { mutableStateOf<List<ContactPhoneOption>?>(null) }
     var pendingContactName by remember { mutableStateOf("") }
+    var pendingContactPhotoUri by remember { mutableStateOf<String?>(null) }
+
+    val extraContactSuggestions = remember(contacts) {
+        contacts.filter { it.name.isNotBlank() && it.phone.isNotBlank() }.map { c ->
+            DeviceContactSuggestion(
+                contactId = "saved_${c.id}",
+                name = c.name,
+                phones = listOf(
+                    ContactPhoneOption(
+                        rawNumber = c.phone,
+                        displayNumber = c.phone,
+                        typeLabelEn = "Saved",
+                        typeLabelBn = "সংরক্ষিত"
+                    )
+                ),
+                photoUri = null
+            )
+        }
+    }
+
+    val applyContactSelection: (String, List<ContactPhoneOption>, String?) -> Unit = { cName, phones, photoUri ->
+        if (cName.isNotBlank()) {
+            name = cName
+        }
+        selectedPhotoUri = photoUri
+        when {
+            phones.isEmpty() -> {
+                Toast.makeText(
+                    context,
+                    if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            phones.size == 1 -> {
+                phone = phones.first().rawNumber
+            }
+            else -> {
+                pendingContactName = cName
+                pendingContactPhotoUri = photoUri
+                phoneOptionsForSelection = phones
+            }
+        }
+    }
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -2322,25 +2401,7 @@ fun AddLoanEntryBottomSheet(
         if (uri != null) {
             val result = ContactUtils.extractContact(context, uri)
             if (result != null) {
-                if (result.name.isNotBlank()) {
-                    name = result.name
-                }
-                when {
-                    result.phones.isEmpty() -> {
-                        Toast.makeText(
-                            context,
-                            if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    result.phones.size == 1 -> {
-                        phone = result.phones.first().rawNumber
-                    }
-                    else -> {
-                        pendingContactName = result.name
-                        phoneOptionsForSelection = result.phones
-                    }
-                }
+                applyContactSelection(result.name, result.phones, result.photoUri)
             }
         }
     }
@@ -2365,6 +2426,7 @@ fun AddLoanEntryBottomSheet(
             contactName = pendingContactName,
             options = phoneOptionsForSelection!!,
             isBangla = isBangla,
+            photoUri = pendingContactPhotoUri,
             onSelectPhone = { selected ->
                 phone = selected.rawNumber
                 phoneOptionsForSelection = null
@@ -2531,6 +2593,9 @@ fun AddLoanEntryBottomSheet(
                             horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
                             items(contacts.take(8), key = { it.id }) { contact ->
+                                val chipPhotoUri = remember(contact.name, contact.phone) {
+                                    ContactUtils.findContactPhotoUri(context, contact.name, contact.phone)
+                                }
                                 FilterChip(
                                     selected = name == contact.name,
                                     onClick = {
@@ -2538,9 +2603,18 @@ fun AddLoanEntryBottomSheet(
                                         if (contact.phone.isNotBlank()) {
                                             phone = contact.phone
                                         }
+                                        selectedPhotoUri = chipPhotoUri
                                     },
                                     leadingIcon = {
-                                        Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        if (!chipPhotoUri.isNullOrBlank()) {
+                                            ContactAvatar(
+                                                name = contact.name,
+                                                photoUri = chipPhotoUri,
+                                                size = 18.dp
+                                            )
+                                        } else {
+                                            Icon(Icons.Default.Person, contentDescription = null, modifier = Modifier.size(14.dp))
+                                        }
                                     },
                                     label = { Text(contact.name, fontSize = 12.sp) }
                                 )
@@ -2549,58 +2623,46 @@ fun AddLoanEntryBottomSheet(
                         Spacer(modifier = Modifier.height(10.dp))
                     }
 
-                    // Person Name Input
-                    OutlinedTextField(
+                    // Person Name Input with Inline Contact Search & Photo Dropdown
+                    ContactSearchDropdownField(
                         value = name,
-                        onValueChange = { name = it },
+                        onValueChange = {
+                            name = it
+                            if (it.isBlank()) selectedPhotoUri = null
+                        },
                         label = { Text(if (isBangla) "ব্যক্তির নাম *" else "Person Name *") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Person, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        },
-                        trailingIcon = {
-                            IconButton(
-                                onClick = onPickContactClick,
-                                modifier = Modifier.testTag(if (isGave) "pick_contact_btn_gave" else "pick_contact_btn_took")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.ContactPhone,
-                                    contentDescription = if (isBangla) "কন্টাক্ট থেকে চুজ করুন" else "Pick from Contacts",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        },
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("person_name_input")
+                        placeholder = { Text(if (isBangla) "নাম লিখে ফোনের কন্টাক্ট সার্চ করুন..." else "Search phone contacts by name...") },
+                        isPhoneField = false,
+                        isBangla = isBangla,
+                        selectedPhotoUri = selectedPhotoUri,
+                        defaultLeadingIcon = Icons.Default.Person,
+                        onPickExternalContact = onPickContactClick,
+                        externalPickButtonTestTag = if (isGave) "pick_contact_btn_gave" else "pick_contact_btn_took",
+                        fieldTestTag = "person_name_input",
+                        extraSuggestions = extraContactSuggestions,
+                        onContactSelected = { suggestion ->
+                            applyContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(10.dp))
 
-                    // Mobile Number Input
-                    OutlinedTextField(
+                    // Mobile Number Input with Inline Contact Search & Photo Dropdown
+                    ContactSearchDropdownField(
                         value = phone,
                         onValueChange = { phone = it },
                         label = { Text(if (isBangla) "মোবাইল নম্বর (ঐচ্ছিক)" else "Phone Number (Optional)") },
-                        leadingIcon = {
-                            Icon(Icons.Default.Phone, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        },
-                        trailingIcon = {
-                            IconButton(onClick = onPickContactClick) {
-                                Icon(
-                                    imageVector = Icons.Default.Contacts,
-                                    contentDescription = if (isBangla) "কন্টাক্ট থেকে চুজ করুন" else "Pick from Contacts",
-                                    tint = MaterialTheme.colorScheme.primary
-                                )
-                            }
-                        },
-                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                        singleLine = true,
-                        shape = RoundedCornerShape(12.dp),
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .testTag("person_phone_input")
+                        placeholder = { Text(if (isBangla) "নম্বর বা নাম দিয়ে সার্চ করুন..." else "Search by phone or name...") },
+                        isPhoneField = true,
+                        isBangla = isBangla,
+                        selectedPhotoUri = null,
+                        defaultLeadingIcon = Icons.Default.Phone,
+                        onPickExternalContact = onPickContactClick,
+                        fieldTestTag = "person_phone_input",
+                        extraSuggestions = extraContactSuggestions,
+                        onContactSelected = { suggestion ->
+                            applyContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                        }
                     )
 
                     Spacer(modifier = Modifier.height(14.dp))
@@ -2978,6 +3040,32 @@ fun AddShopCreditBottomSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var phoneOptionsForSelection by remember { mutableStateOf<List<ContactPhoneOption>?>(null) }
     var pendingContactName by remember { mutableStateOf("") }
+    var pendingContactPhotoUri by remember { mutableStateOf<String?>(null) }
+    var selectedContactPhotoUri by remember { mutableStateOf<String?>(null) }
+
+    val applyShopContactSelection: (String, List<ContactPhoneOption>, String?) -> Unit = { cName, phones, photoUri ->
+        if (selectedVendor == null && vendorSearchQuery.isBlank() && cName.isNotBlank()) {
+            vendorSearchQuery = cName
+        }
+        selectedContactPhotoUri = photoUri
+        when {
+            phones.isEmpty() -> {
+                Toast.makeText(
+                    context,
+                    if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            phones.size == 1 -> {
+                phone = phones.first().rawNumber
+            }
+            else -> {
+                pendingContactName = cName
+                pendingContactPhotoUri = photoUri
+                phoneOptionsForSelection = phones
+            }
+        }
+    }
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -2985,25 +3073,7 @@ fun AddShopCreditBottomSheet(
         if (uri != null) {
             val result = ContactUtils.extractContact(context, uri)
             if (result != null) {
-                if (selectedVendor == null && vendorSearchQuery.isBlank() && result.name.isNotBlank()) {
-                    vendorSearchQuery = result.name
-                }
-                when {
-                    result.phones.isEmpty() -> {
-                        Toast.makeText(
-                            context,
-                            if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    result.phones.size == 1 -> {
-                        phone = result.phones.first().rawNumber
-                    }
-                    else -> {
-                        pendingContactName = result.name
-                        phoneOptionsForSelection = result.phones
-                    }
-                }
+                applyShopContactSelection(result.name, result.phones, result.photoUri)
             }
         }
     }
@@ -3028,6 +3098,7 @@ fun AddShopCreditBottomSheet(
             contactName = pendingContactName,
             options = phoneOptionsForSelection!!,
             isBangla = isBangla,
+            photoUri = pendingContactPhotoUri,
             onSelectPhone = { selected ->
                 phone = selected.rawNumber
                 phoneOptionsForSelection = null
@@ -3384,7 +3455,7 @@ fun AddShopCreditBottomSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedTextField(
+            ContactSearchDropdownField(
                 value = phone,
                 onValueChange = { phone = it },
                 label = {
@@ -3394,29 +3465,26 @@ fun AddShopCreditBottomSheet(
                         overflow = TextOverflow.Ellipsis
                     )
                 },
-                leadingIcon = {
-                    Icon(Icons.Default.Phone, contentDescription = null, tint = Color(0xFF94A3B8))
+                placeholder = {
+                    Text(
+                        text = if (isBangla) "নম্বর বা নাম দিয়ে কন্টাক্ট খুঁজুন..." else "Search contact by number or name...",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        color = Color(0xFF64748B)
+                    )
                 },
-                trailingIcon = {
-                    IconButton(
-                        onClick = onPickContactClick,
-                        modifier = Modifier.testTag("shop_credit_pick_phone_btn")
-                    ) {
-                        Icon(
-                            Icons.Default.Contacts,
-                            contentDescription = if (isBangla) "কন্টাক্ট থেকে চুজ করুন" else "Pick from Contacts",
-                            tint = MaterialTheme.colorScheme.primary
-                        )
-                    }
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
+                isPhoneField = true,
+                isBangla = isBangla,
+                selectedPhotoUri = selectedContactPhotoUri,
+                defaultLeadingIcon = Icons.Default.Phone,
+                leadingIconTint = Color(0xFF94A3B8),
+                onPickExternalContact = onPickContactClick,
+                externalPickButtonTestTag = "shop_credit_pick_phone_btn",
+                fieldTestTag = "shop_credit_phone_input",
                 colors = inputFieldColors,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .heightIn(min = 56.dp)
-                    .testTag("shop_credit_phone_input")
+                onContactSelected = { suggestion ->
+                    applyShopContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                }
             )
 
             Spacer(modifier = Modifier.height(10.dp))
@@ -3582,11 +3650,37 @@ fun AddNewVendorBottomSheet(
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var name by remember { mutableStateOf(initialName) }
     var phone by remember { mutableStateOf("") }
+    var selectedPhotoUri by remember { mutableStateOf<String?>(null) }
     var locationNote by remember { mutableStateOf("") }
     var categoryTag by remember { mutableStateOf("") }
 
     var phoneOptionsForSelection by remember { mutableStateOf<List<ContactPhoneOption>?>(null) }
     var pendingContactName by remember { mutableStateOf("") }
+    var pendingContactPhotoUri by remember { mutableStateOf<String?>(null) }
+
+    val applyVendorContactSelection: (String, List<ContactPhoneOption>, String?) -> Unit = { cName, phones, photoUri ->
+        if (cName.isNotBlank()) {
+            name = cName
+        }
+        selectedPhotoUri = photoUri
+        when {
+            phones.isEmpty() -> {
+                Toast.makeText(
+                    context,
+                    if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            phones.size == 1 -> {
+                phone = phones.first().rawNumber
+            }
+            else -> {
+                pendingContactName = cName
+                pendingContactPhotoUri = photoUri
+                phoneOptionsForSelection = phones
+            }
+        }
+    }
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -3594,25 +3688,7 @@ fun AddNewVendorBottomSheet(
         if (uri != null) {
             val result = ContactUtils.extractContact(context, uri)
             if (result != null) {
-                if (result.name.isNotBlank()) {
-                    name = result.name
-                }
-                when {
-                    result.phones.isEmpty() -> {
-                        Toast.makeText(
-                            context,
-                            if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    result.phones.size == 1 -> {
-                        phone = result.phones.first().rawNumber
-                    }
-                    else -> {
-                        pendingContactName = result.name
-                        phoneOptionsForSelection = result.phones
-                    }
-                }
+                applyVendorContactSelection(result.name, result.phones, result.photoUri)
             }
         }
     }
@@ -3637,6 +3713,7 @@ fun AddNewVendorBottomSheet(
             contactName = pendingContactName,
             options = phoneOptionsForSelection!!,
             isBangla = isBangla,
+            photoUri = pendingContactPhotoUri,
             onSelectPhone = { selected ->
                 phone = selected.rawNumber
                 phoneOptionsForSelection = null
@@ -3740,21 +3817,23 @@ fun AddNewVendorBottomSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedTextField(
+            ContactSearchDropdownField(
                 value = name,
-                onValueChange = { name = it },
+                onValueChange = {
+                    name = it
+                    if (it.isBlank()) selectedPhotoUri = null
+                },
                 label = { Text(if (isBangla) "দোকানের নাম *" else "Store / Shop Name *") },
-                leadingIcon = {
-                    Icon(Icons.Default.Store, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                },
-                trailingIcon = {
-                    IconButton(onClick = onPickContactClick) {
-                        Icon(Icons.Default.ContactPhone, contentDescription = if (isBangla) "কন্টাক্ট থেকে চুজ করুন" else "Pick from Contacts", tint = MaterialTheme.colorScheme.primary)
-                    }
-                },
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().testTag("vendor_name_input")
+                placeholder = { Text(if (isBangla) "দোকানের নাম বা কন্টাক্ট সার্চ করুন..." else "Search contact or type shop name...") },
+                isPhoneField = false,
+                isBangla = isBangla,
+                selectedPhotoUri = selectedPhotoUri,
+                defaultLeadingIcon = Icons.Default.Store,
+                onPickExternalContact = onPickContactClick,
+                fieldTestTag = "vendor_name_input",
+                onContactSelected = { suggestion ->
+                    applyVendorContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -3785,22 +3864,20 @@ fun AddNewVendorBottomSheet(
 
             Spacer(modifier = Modifier.height(12.dp))
 
-            OutlinedTextField(
+            ContactSearchDropdownField(
                 value = phone,
                 onValueChange = { phone = it },
                 label = { Text(if (isBangla) "মোবাইল নম্বর (ঐচ্ছিক)" else "Phone Number (Optional)") },
-                leadingIcon = {
-                    Icon(Icons.Default.Phone, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                },
-                trailingIcon = {
-                    IconButton(onClick = onPickContactClick) {
-                        Icon(Icons.Default.Contacts, contentDescription = if (isBangla) "কন্টাক্ট থেকে চুজ করুন" else "Pick from Contacts", tint = MaterialTheme.colorScheme.primary)
-                    }
-                },
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                singleLine = true,
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.fillMaxWidth().testTag("vendor_phone_input")
+                placeholder = { Text(if (isBangla) "নম্বর বা নাম দিয়ে সার্চ করুন..." else "Search by phone or name...") },
+                isPhoneField = true,
+                isBangla = isBangla,
+                selectedPhotoUri = null,
+                defaultLeadingIcon = Icons.Default.Phone,
+                onPickExternalContact = onPickContactClick,
+                fieldTestTag = "vendor_phone_input",
+                onContactSelected = { suggestion ->
+                    applyVendorContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                }
             )
 
             Spacer(modifier = Modifier.height(12.dp))
@@ -3885,8 +3962,35 @@ fun EditVendorPhoneDialog(
 ) {
     val context = LocalContext.current
     var phone by remember { mutableStateOf(vendor.phone) }
+    var selectedPhotoUri by remember {
+        mutableStateOf(ContactUtils.findContactPhotoUri(context, vendor.name, vendor.phone))
+    }
     var phoneOptionsForSelection by remember { mutableStateOf<List<ContactPhoneOption>?>(null) }
     var pendingContactName by remember { mutableStateOf("") }
+    var pendingContactPhotoUri by remember { mutableStateOf<String?>(null) }
+
+    val handleVendorPhoneSelection: (String, List<ContactPhoneOption>, String?) -> Unit = { cName, phones, photoUri ->
+        if (!photoUri.isNullOrBlank()) {
+            selectedPhotoUri = photoUri
+        }
+        when {
+            phones.isEmpty() -> {
+                Toast.makeText(
+                    context,
+                    if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
+                    Toast.LENGTH_SHORT
+                ).show()
+            }
+            phones.size == 1 -> {
+                phone = phones.first().rawNumber
+            }
+            else -> {
+                pendingContactName = cName
+                pendingContactPhotoUri = photoUri
+                phoneOptionsForSelection = phones
+            }
+        }
+    }
 
     val contactPickerLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.PickContact()
@@ -3894,22 +3998,7 @@ fun EditVendorPhoneDialog(
         if (uri != null) {
             val result = ContactUtils.extractContact(context, uri)
             if (result != null) {
-                when {
-                    result.phones.isEmpty() -> {
-                        Toast.makeText(
-                            context,
-                            if (isBangla) "এই কন্টাক্টে কোনো ফোন নম্বর পাওয়া যায়নি" else "No phone numbers found in this contact",
-                            Toast.LENGTH_SHORT
-                        ).show()
-                    }
-                    result.phones.size == 1 -> {
-                        phone = result.phones.first().rawNumber
-                    }
-                    else -> {
-                        pendingContactName = result.name
-                        phoneOptionsForSelection = result.phones
-                    }
-                }
+                handleVendorPhoneSelection(result.name, result.phones, result.photoUri)
             }
         }
     }
@@ -3934,6 +4023,7 @@ fun EditVendorPhoneDialog(
             contactName = pendingContactName,
             options = phoneOptionsForSelection!!,
             isBangla = isBangla,
+            photoUri = pendingContactPhotoUri,
             onSelectPhone = { selected ->
                 phone = selected.rawNumber
                 phoneOptionsForSelection = null
@@ -3952,18 +4042,27 @@ fun EditVendorPhoneDialog(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
         ) {
             Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
-                Text(
-                    text = if (isBangla) "দোকানের ফোন নম্বর পরিবর্তন / যুক্ত করুন" else "Update Shop Phone Number",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
-                )
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = vendor.name,
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                    fontWeight = FontWeight.SemiBold
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    ContactAvatar(
+                        name = vendor.name,
+                        photoUri = selectedPhotoUri,
+                        size = 40.dp
+                    )
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = if (isBangla) "দোকানের ফোন নম্বর পরিবর্তন / যুক্ত করুন" else "Update Shop Phone Number",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = vendor.name,
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
 
                 Spacer(modifier = Modifier.height(14.dp))
 
@@ -3986,22 +4085,20 @@ fun EditVendorPhoneDialog(
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                OutlinedTextField(
+                ContactSearchDropdownField(
                     value = phone,
                     onValueChange = { phone = it },
-                    label = { Text(if (isBangla) "মোবাইল নম্বর" else "Phone Number") },
-                    leadingIcon = {
-                        Icon(Icons.Default.Phone, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    },
-                    trailingIcon = {
-                        IconButton(onClick = onPickContact) {
-                            Icon(Icons.Default.Contacts, contentDescription = if (isBangla) "কন্টাক্ট থেকে চুজ করুন" else "Pick from Contacts", tint = MaterialTheme.colorScheme.primary)
-                        }
-                    },
-                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Phone),
-                    singleLine = true,
-                    shape = RoundedCornerShape(12.dp),
-                    modifier = Modifier.fillMaxWidth().testTag("edit_vendor_phone_input")
+                    label = { Text(if (isBangla) "মোবাইল নম্বর বা নাম সার্চ করুন" else "Search Contact or Phone Number") },
+                    placeholder = { Text(if (isBangla) "নাম বা নম্বর লিখে সার্চ করুন..." else "Type name or number...") },
+                    isPhoneField = true,
+                    isBangla = isBangla,
+                    selectedPhotoUri = selectedPhotoUri,
+                    defaultLeadingIcon = Icons.Default.Phone,
+                    onPickExternalContact = onPickContact,
+                    fieldTestTag = "edit_vendor_phone_input",
+                    onContactSelected = { suggestion ->
+                        handleVendorPhoneSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
+                    }
                 )
 
                 Spacer(modifier = Modifier.height(16.dp))

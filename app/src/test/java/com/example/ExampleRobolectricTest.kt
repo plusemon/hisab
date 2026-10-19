@@ -344,5 +344,67 @@ class ExampleRobolectricTest {
     )
     assertEquals(12, completed.summary.totalRecords)
   }
+
+  @Test
+  fun `contact search filters by name and phone digits and preserves photoUri`() {
+    val context = ApplicationProvider.getApplicationContext<Context>()
+    val extraContacts = listOf(
+      com.plusemon.hisab.domain.util.DeviceContactSuggestion(
+        contactId = "1",
+        name = "Rahim Ahmed",
+        phones = listOf(
+          com.plusemon.hisab.domain.util.ContactPhoneOption(
+            rawNumber = "+880 1712-345678",
+            displayNumber = "+880 1712-345678",
+            typeLabelEn = "Mobile",
+            typeLabelBn = "মোবাইল"
+          ),
+          com.plusemon.hisab.domain.util.ContactPhoneOption(
+            rawNumber = "01819-000111",
+            displayNumber = "01819-000111",
+            typeLabelEn = "Work",
+            typeLabelBn = "অফিস"
+          )
+        ),
+        photoUri = "content://com.android.contacts/contacts/1/photo"
+      ),
+      com.plusemon.hisab.domain.util.DeviceContactSuggestion(
+        contactId = "2",
+        name = "Karim Store",
+        phones = listOf(
+          com.plusemon.hisab.domain.util.ContactPhoneOption(
+            rawNumber = "01911-223344",
+            displayNumber = "01911-223344",
+            typeLabelEn = "Mobile",
+            typeLabelBn = "মোবাইল"
+          )
+        ),
+        photoUri = null
+      )
+    )
+
+    // Search by name
+    val byName = com.plusemon.hisab.domain.util.ContactUtils.searchDeviceContacts(
+      context = context,
+      query = "Rahim",
+      extraContacts = extraContacts
+    )
+    assertEquals(1, byName.size)
+    assertEquals("Rahim Ahmed", byName[0].name)
+    assertEquals("content://com.android.contacts/contacts/1/photo", byName[0].photoUri)
+    assertEquals(2, byName[0].phones.size)
+
+    // Search by normalized phone digits (ignoring hyphen/space)
+    val bySecondaryDigits = com.plusemon.hisab.domain.util.ContactUtils.searchDeviceContacts(
+      context = context,
+      query = "01819000",
+      extraContacts = extraContacts
+    )
+    assertEquals(1, bySecondaryDigits.size)
+    assertEquals("Rahim Ahmed", bySecondaryDigits[0].name)
+    // Secondary matching phone should be ordered first when searched by its digits
+    assertEquals("01819-000111", bySecondaryDigits[0].primaryPhone?.rawNumber)
+  }
 }
+
 
