@@ -339,12 +339,12 @@ fun TransactionsScreen(
                     }
 
                     // Type Chip (if selected)
-                    if (selectedTypeFilter != null) {
-                        val typeLabel = when (selectedTypeFilter) {
+                    val activeTypeFilter = selectedTypeFilter
+                    if (activeTypeFilter != null) {
+                        val typeLabel = when (activeTypeFilter) {
                             TransactionType.EXPENSE -> Localization.getString(Localization.Key.EXPENSE_SHORT, isBn)
                             TransactionType.INCOME -> Localization.getString(Localization.Key.INCOME_SHORT, isBn)
                             TransactionType.TRANSFER -> Localization.getString(Localization.Key.TRANSFER_SHORT, isBn)
-                            null -> ""
                         }
                         item(key = "active_type") {
                             FilterChip(

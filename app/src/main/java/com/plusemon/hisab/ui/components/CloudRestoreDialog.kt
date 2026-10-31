@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.CheckCircle
@@ -30,7 +31,6 @@ import androidx.compose.material.icons.filled.CloudDownload
 import androidx.compose.material.icons.filled.ErrorOutline
 import androidx.compose.material.icons.filled.Handshake
 import androidx.compose.material.icons.filled.PieChart
-import androidx.compose.material.icons.filled.ReceiptLong
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Savings
 import androidx.compose.material3.AlertDialog
@@ -267,7 +267,7 @@ fun CloudRestoreDialog(
                             }
                             if (summary.transactionsCount > 0) {
                                 RestoreBadge(
-                                    icon = Icons.Default.ReceiptLong,
+                                    icon = Icons.AutoMirrored.Filled.ReceiptLong,
                                     label = if (isBn) "${Formatters.toBanglaDigits(summary.transactionsCount.toString())}টি লেনদেন" else "${summary.transactionsCount} Transactions"
                                 )
                             }

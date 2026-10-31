@@ -40,6 +40,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.TrendingDown
+import androidx.compose.material.icons.automirrored.filled.TrendingUp
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Archive
 import androidx.compose.material.icons.filled.CalendarToday
@@ -104,8 +106,6 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.filled.SwapHoriz
-import androidx.compose.material.icons.filled.TrendingDown
-import androidx.compose.material.icons.filled.TrendingUp
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -2515,7 +2515,7 @@ fun AddLoanEntryBottomSheet(
                                 modifier = Modifier.padding(vertical = 8.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.TrendingDown,
+                                    imageVector = Icons.AutoMirrored.Filled.TrendingDown,
                                     contentDescription = null,
                                     tint = if (pagerState.currentPage == 0) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
@@ -2543,7 +2543,7 @@ fun AddLoanEntryBottomSheet(
                                 modifier = Modifier.padding(vertical = 8.dp)
                             ) {
                                 Icon(
-                                    imageVector = Icons.Default.TrendingUp,
+                                    imageVector = Icons.AutoMirrored.Filled.TrendingUp,
                                     contentDescription = null,
                                     tint = if (pagerState.currentPage == 1) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant,
                                     modifier = Modifier.size(18.dp)
