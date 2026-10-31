@@ -8,6 +8,7 @@ import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import com.plusemon.hisab.R
 import com.plusemon.hisab.data.local.AppDatabase
 import com.plusemon.hisab.data.model.AccountType
 import com.plusemon.hisab.data.model.Budget
@@ -132,7 +133,7 @@ class FirestoreRepositoryImpl(
     private fun getFirestore(): FirebaseFirestore? {
         return try {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
-                FirebaseFirestore.getInstance()
+                FirebaseFirestore.getInstance(context.getString(R.string.firestore_database_id))
             } else {
                 null
             }

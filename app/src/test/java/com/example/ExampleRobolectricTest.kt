@@ -106,8 +106,12 @@ class ExampleRobolectricTest {
     val authRepo = com.plusemon.hisab.data.repository.AuthRepository(context, db)
     val hisabRepo = com.plusemon.hisab.data.repository.HisabRepository(db)
 
-    // Sign up a user
-    val signUpResult = authRepo.signUpWithEmail("Test User", "persist@example.com", "password123")
+    // Sign in with Google
+    val signUpResult = authRepo.signInWithGoogle(
+      uid = "google_persist_user",
+      email = "persist@example.com",
+      displayName = "Test User"
+    )
     assertTrue(signUpResult is com.plusemon.hisab.data.repository.AuthResult.Success)
     val user = (signUpResult as com.plusemon.hisab.data.repository.AuthResult.Success).user
 
@@ -180,7 +184,11 @@ class ExampleRobolectricTest {
     val authRepo = com.plusemon.hisab.data.repository.AuthRepository(context, db)
     val hisabRepo = com.plusemon.hisab.data.repository.HisabRepository(db)
 
-    val signUpResult = authRepo.signUpWithEmail("Delete Test", "delete_test@example.com", "pass123")
+    val signUpResult = authRepo.signInWithGoogle(
+      uid = "google_delete_test_user",
+      email = "delete_test@example.com",
+      displayName = "Delete Test"
+    )
     assertTrue(signUpResult is com.plusemon.hisab.data.repository.AuthResult.Success)
     val user = (signUpResult as com.plusemon.hisab.data.repository.AuthResult.Success).user
 

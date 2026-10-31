@@ -928,7 +928,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             android.util.Log.i(
                 "GoogleSignIn",
                 if (isCancellation) "Google Sign-In was cancelled by the user."
-                else "No Google account found on device. Guiding user to email login or account settings."
+                else "No Google account found on device. Guiding user to device account settings."
             )
         } else {
             android.util.Log.w(
@@ -947,9 +947,9 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             // No credentials on device (e.g. fresh emulator or device without Google accounts)
             isNoCredential -> {
                 if (isBn) {
-                    "এই ডিভাইসে কোনো গুগল অ্যাকাউন্ট যোগ করা নেই। অনুগ্রহ করে নিচে ইমেইল ও পাসওয়ার্ড দিয়ে প্রবেশ/নিবন্ধন করুন অথবা ডিভাইসের সেটিংসে গুগল অ্যাকাউন্ট যোগ করুন।"
+                    "এই ডিভাইসে কোনো গুগল অ্যাকাউন্ট যোগ করা নেই। অনুগ্রহ করে ডিভাইসের সেটিংসে গুগল অ্যাকাউন্ট যোগ করে পুনরায় চেষ্টা করুন।"
                 } else {
-                    "No Google account found on this device. Please sign in or create an account with Email & Password below, or add a Google account in device Settings."
+                    "No Google account found on this device. Please add a Google account in your device Settings and try again."
                 }
             }
             // DEVELOPER_ERROR / Configuration issue (Status code 10 or SHA-1 / package name mismatch)
@@ -1011,38 +1011,6 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             current = current.cause
         }
         return null
-    }
-
-    fun signInWithEmail(email: String, pass: String) {
-        viewModelScope.launch {
-            _isAuthLoading.value = true
-            _authError.value = null
-            when (val result = authRepository.signInWithEmail(email, pass)) {
-                is AuthResult.Success -> {
-                    _isAuthLoading.value = false
-                }
-                is AuthResult.Error -> {
-                    _isAuthLoading.value = false
-                    _authError.value = result.message
-                }
-            }
-        }
-    }
-
-    fun signUpWithEmail(name: String, email: String, pass: String) {
-        viewModelScope.launch {
-            _isAuthLoading.value = true
-            _authError.value = null
-            when (val result = authRepository.signUpWithEmail(name, email, pass)) {
-                is AuthResult.Success -> {
-                    _isAuthLoading.value = false
-                }
-                is AuthResult.Error -> {
-                    _isAuthLoading.value = false
-                    _authError.value = result.message
-                }
-            }
-        }
     }
 
     fun clearAuthError() {

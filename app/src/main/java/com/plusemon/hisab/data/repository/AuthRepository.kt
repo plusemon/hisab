@@ -18,13 +18,14 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.withContext
-import java.security.MessageDigest
 import java.util.UUID
-
 import android.util.Log
+import androidx.credentials.ClearCredentialStateRequest
+import androidx.credentials.CredentialManager
 import com.google.firebase.FirebaseApp
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
+import com.plusemon.hisab.R
 
 sealed class AuthResult {
     data class Success(val user: User) : AuthResult()
@@ -140,11 +141,6 @@ class AuthRepository(
         }
     }
 
-    private fun hashPassword(password: String): String {
-        val bytes = MessageDigest.getInstance("SHA-256").digest(password.toByteArray())
-        return bytes.joinToString("") { "%02x".format(it) }
-    }
-
     suspend fun signInWithGoogle(
         uid: String? = null,
         email: String,
@@ -190,7 +186,7 @@ class AuthRepository(
     private fun syncFirestoreUser(uid: String, email: String, displayName: String, photoUrl: String?) {
         try {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
-                val firestore = FirebaseFirestore.getInstance()
+                val firestore = FirebaseFirestore.getInstance(context.getString(R.string.firestore_database_id))
                 val userData = hashMapOf(
                     "uid" to uid,
                     "email" to email,
@@ -204,61 +200,6 @@ class AuthRepository(
         } catch (e: Exception) {
             Log.w("AuthRepository", "Firestore sync skipped or error: ${e.message}")
         }
-    }
-
-    suspend fun signInWithEmail(email: String, pass: String): AuthResult = withContext(Dispatchers.IO) {
-        val trimmedEmail = email.trim().lowercase()
-        if (trimmedEmail.isBlank() || pass.isBlank()) {
-            return@withContext AuthResult.Error("Please fill in both email and password")
-        }
-        val user = userDao.getUserByEmail(trimmedEmail)
-            ?: userDao.getAllUsersDirect().firstOrNull { it.email.equals(trimmedEmail, ignoreCase = true) }
-            ?: return@withContext AuthResult.Error("No account found with this email. Please create an account.")
-
-        if (user.isGoogleUser && user.passwordHash == null) {
-            return@withContext AuthResult.Error("This account was created with Google Sign-In. Please tap 'Continue with Google'.")
-        }
-
-        val hashed = hashPassword(pass)
-        if (user.passwordHash != hashed) {
-            return@withContext AuthResult.Error("Incorrect password. Please verify and try again.")
-        }
-
-        saveSession(user)
-        AuthResult.Success(user)
-    }
-
-    suspend fun signUpWithEmail(name: String, email: String, pass: String): AuthResult = withContext(Dispatchers.IO) {
-        val trimmedEmail = email.trim().lowercase()
-        val trimmedName = name.trim()
-        if (trimmedName.isBlank() || trimmedEmail.isBlank() || pass.isBlank()) {
-            return@withContext AuthResult.Error("Please fill in all fields.")
-        }
-        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
-            return@withContext AuthResult.Error("Please enter a valid email address.")
-        }
-        if (pass.length < 6) {
-            return@withContext AuthResult.Error("Password must be at least 6 characters long.")
-        }
-
-        val existing = userDao.getUserByEmail(trimmedEmail)
-            ?: userDao.getAllUsersDirect().firstOrNull { it.email.equals(trimmedEmail, ignoreCase = true) }
-        if (existing != null) {
-            return@withContext AuthResult.Error("An account with this email already exists. Please Sign In.")
-        }
-
-        val newId = UUID.randomUUID().toString()
-        val user = User(
-            id = newId,
-            email = trimmedEmail,
-            displayName = trimmedName,
-            isGoogleUser = false,
-            passwordHash = hashPassword(pass)
-        )
-        userDao.insertUser(user)
-
-        saveSession(user)
-        AuthResult.Success(user)
     }
 
     suspend fun ensureUserDataSeeded(userId: String, syncToCloudIfSeeded: Boolean = false) = withContext(Dispatchers.IO) {
@@ -426,6 +367,11 @@ class AuthRepository(
         } catch (e: Exception) {
             Log.w("AuthRepository", "Firebase sign out error: ${e.message}")
         }
+        try {
+            CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
+        } catch (e: Exception) {
+            Log.w("AuthRepository", "Failed to clear credential state: ${e.message}")
+        }
         _currentUser.value = null
     }
 
@@ -438,6 +384,11 @@ class AuthRepository(
             }
         } catch (e: Exception) {
             Log.w("AuthRepository", "Firebase sign out error: ${e.message}")
+        }
+        try {
+            CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
+        } catch (e: Exception) {
+            Log.w("AuthRepository", "Failed to clear credential state: ${e.message}")
         }
         _currentUser.value = null
     }
