@@ -373,15 +373,26 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
             if (localAccCount == 0 && localTxCount == 0) {
                 // If local database has no data (e.g. app data was cleared or first login on device)
-                val hasCloud = firestoreRepository.checkHasCloudData(userId).getOrDefault(false)
-                if (hasCloud) {
-                    // Cloud data exists! Launch interactive restoration dialog
-                    triggerRestoreFromCloud(userId, isManual = false)
+                val checkResult = firestoreRepository.checkHasCloudData(userId)
+                if (checkResult.isSuccess) {
+                    val hasCloud = checkResult.getOrDefault(false)
+                    if (hasCloud) {
+                        // Cloud data exists! Launch automatic restoration
+                        triggerRestoreFromCloud(userId, isManual = false)
+                    } else {
+                        // Truly brand new user confirmed with no existing cloud records:
+                        authRepository.ensureUserDataSeeded(userId)
+                        hisabRepository.processRecurringTransactions(userId)
+                    }
                 } else {
-                    // Truly brand new user with no existing cloud records:
-                    // Seed initial starter accounts & categories
-                    authRepository.ensureUserDataSeeded(userId)
-                    hisabRepository.processRecurringTransactions(userId)
+                    // Cloud check failed (e.g. offline or network error). DO NOT seed default data, as it would overwrite/reset cloud records.
+                    android.util.Log.w("HisabViewModel", "checkHasCloudData failed due to network/offline. Skipping auto-seed to protect cloud backup.")
+                    _snackbarMessage.emit(
+                        if (_settings.value.language == "bn")
+                            "ইন্টারনেট সংযোগ নেই। অনলাইন হলে ডাটা সিঙ্ক হবে।"
+                        else
+                            "No internet connection. Data will sync when online."
+                    )
                 }
             } else {
                 // Normal app start with existing local records:
@@ -414,7 +425,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                             if (isBn) "কোনো ক্লাউড ব্যাকআপ পাওয়া যায়নি।" else "No cloud backup found for this account."
                         )
                     } else {
-                        // In auto-mode with empty cloud: seed starter accounts
+                        // In auto-mode with verified empty cloud: seed starter accounts
                         authRepository.ensureUserDataSeeded(uid)
                         _restoreUiState.value = RestoreUiState.Idle
                     }
@@ -425,8 +436,12 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                             if (isBn) "ক্লাউড রিস্টোর সম্পন্ন করা যায়নি: $errorMsg" else "Cloud restore failed: $errorMsg"
                         )
                     } else {
-                        authRepository.ensureUserDataSeeded(uid)
+                        // DO NOT seed default data on failure! Protects user data from being reset when offline.
+                        android.util.Log.w("HisabViewModel", "Automatic restore failed: $errorMsg. Not seeding default data.")
                         _restoreUiState.value = RestoreUiState.Idle
+                        _snackbarMessage.emit(
+                            if (isBn) "ক্লাউড থেকে ডাটা নামানো যায়নি (অফলাইন মোড)" else "Could not download cloud data (offline mode)"
+                        )
                     }
                 }
             } catch (e: Exception) {
@@ -435,7 +450,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                         e.localizedMessage ?: "Restoration failed"
                     )
                 } else {
-                    authRepository.ensureUserDataSeeded(uid)
+                    android.util.Log.w("HisabViewModel", "Automatic restoration exception: ${e.message}. Not seeding default data.")
                     _restoreUiState.value = RestoreUiState.Idle
                 }
             }
