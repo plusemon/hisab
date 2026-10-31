@@ -6,12 +6,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Download
+import androidx.compose.material.icons.filled.Downloading
 import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.SystemUpdate
 import androidx.compose.material3.AlertDialog
@@ -20,6 +24,7 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
@@ -27,6 +32,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
@@ -107,6 +113,10 @@ fun UpdateDialog(
         }
 
         is UpdateUiState.Available -> {
+            // Only show modal dialog when triggered manually (e.g. from Settings).
+            // Silent startup checks use the inline UpdateCard on the Dashboard.
+            if (!updateUiState.isManual) return
+
             val info = updateUiState.updateInfo
             AlertDialog(
                 onDismissRequest = onDismiss,
@@ -126,7 +136,12 @@ fun UpdateDialog(
                     )
                 },
                 text = {
-                    Column {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(max = 220.dp)
+                            .verticalScroll(rememberScrollState())
+                    ) {
                         Text(
                             text = if (isBangla) "হিসাব অ্যাপের একটি নতুন সংস্করণ পাওয়া গেছে।" else "A newer version of Hisab is available.",
                             style = MaterialTheme.typography.bodyMedium
@@ -160,7 +175,62 @@ fun UpdateDialog(
         }
 
         is UpdateUiState.Downloading -> {
-            // No modal dialog - download progress is already displayed cleanly in the top banner card on the home page
+            if (!updateUiState.isManual) return
+
+            val progressPercent = (updateUiState.progress * 100).toInt().coerceIn(0, 100)
+            val displayVer = VersionUtils.formatDisplayVersion(updateUiState.updateInfo.version)
+            Dialog(onDismissRequest = {}) {
+                Card(
+                    shape = RoundedCornerShape(20.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
+                ) {
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(24.dp)
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.Downloading,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(modifier = Modifier.width(10.dp))
+                            Text(
+                                text = if (isBangla) "আপডেট ডাউনলোড হচ্ছে ($displayVer)" else "Downloading $displayVer",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Spacer(modifier = Modifier.height(16.dp))
+                        LinearProgressIndicator(
+                            progress = { updateUiState.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp)
+                                .clip(RoundedCornerShape(4.dp))
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = if (isBangla) "ডাউনলোড শেষে স্বয়ংক্রিয়ভাবে ইন্সটল হবে" else "Install starts automatically when ready",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                            Text(
+                                text = "$progressPercent%",
+                                style = MaterialTheme.typography.labelMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    }
+                }
+            }
         }
 
         is UpdateUiState.PermissionNeeded -> {
@@ -215,6 +285,10 @@ fun UpdateDialog(
         }
 
         is UpdateUiState.Downloaded -> {
+            // Only show modal dialog when triggered manually.
+            // Dashboard already displays UpdateReadyCard inline.
+            if (!updateUiState.isManual) return
+
             val info = updateUiState.updateInfo
             AlertDialog(
                 onDismissRequest = onDismiss,

@@ -9,6 +9,7 @@ import android.provider.Settings
 import androidx.core.content.FileProvider
 import com.plusemon.hisab.data.model.UpdateInfo
 import com.plusemon.hisab.domain.util.VersionUtils
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
@@ -24,13 +25,38 @@ class UpdateManager(private val context: Context) {
     }
 
     fun saveDismissedVersion(version: String) {
-        prefs.edit().putString("dismissed_version", version).apply()
+        prefs.edit().putString("dismissed_version", VersionUtils.cleanVersion(version)).apply()
     }
 
     fun getTargetApkFile(version: String): File {
         val clean = VersionUtils.cleanVersion(version)
         val fileName = "Hisab-v$clean.apk"
         return File(context.getExternalFilesDir(null), fileName)
+    }
+
+    /**
+     * Deletes previously downloaded Hisab-v*.apk files whose version is older than or equal to currentVersion.
+     */
+    fun cleanupOldApks(currentVersion: String) {
+        try {
+            val dir = context.getExternalFilesDir(null) ?: return
+            val apkFiles = dir.listFiles { file ->
+                file.isFile && file.name.startsWith("Hisab-v", ignoreCase = true) && file.name.endsWith(".apk", ignoreCase = true)
+            } ?: return
+
+            for (file in apkFiles) {
+                val fileVersion = file.name
+                    .removePrefix("Hisab-v")
+                    .removePrefix("hisab-v")
+                    .removeSuffix(".apk")
+                    .removeSuffix(".APK")
+                if (!VersionUtils.isVersionNewer(currentVersion, fileVersion)) {
+                    file.delete()
+                }
+            }
+        } catch (_: Exception) {
+            // Ignore cleanup errors
+        }
     }
 
     fun downloadApk(updateInfo: UpdateInfo): Flow<Float> = flow {
@@ -52,44 +78,55 @@ class UpdateManager(private val context: Context) {
         val downloadId = downloadManager.enqueue(request)
         var downloading = true
 
-        while (downloading) {
-            val query = DownloadManager.Query().setFilterById(downloadId)
-            val cursor = downloadManager.query(query)
+        try {
+            while (downloading) {
+                val query = DownloadManager.Query().setFilterById(downloadId)
+                downloadManager.query(query).use { cursor ->
+                    if (cursor != null && cursor.moveToFirst()) {
+                        val bytesDownloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
+                        val bytesTotalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
+                        val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                        val reasonIndex = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
 
-            if (cursor != null && cursor.moveToFirst()) {
-                val bytesDownloadedIndex = cursor.getColumnIndex(DownloadManager.COLUMN_BYTES_DOWNLOADED_SO_FAR)
-                val bytesTotalIndex = cursor.getColumnIndex(DownloadManager.COLUMN_TOTAL_SIZE_BYTES)
-                val statusIndex = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                        val bytesDownloaded = if (bytesDownloadedIndex >= 0) cursor.getLong(bytesDownloadedIndex) else 0L
+                        val bytesTotal = if (bytesTotalIndex >= 0) cursor.getLong(bytesTotalIndex) else 0L
+                        val status = if (statusIndex >= 0) cursor.getInt(statusIndex) else -1
+                        val reason = if (reasonIndex >= 0) cursor.getInt(reasonIndex) else 0
 
-                val bytesDownloaded = if (bytesDownloadedIndex >= 0) cursor.getInt(bytesDownloadedIndex) else 0
-                val bytesTotal = if (bytesTotalIndex >= 0) cursor.getInt(bytesTotalIndex) else 0
-                val status = if (statusIndex >= 0) cursor.getInt(statusIndex) else -1
+                        if (bytesTotal > 0L) {
+                            val progress = bytesDownloaded.toFloat() / bytesTotal.toFloat()
+                            emit(progress.coerceIn(0f, 1f))
+                        } else {
+                            emit(0f)
+                        }
 
-                if (bytesTotal > 0) {
-                    val progress = bytesDownloaded.toFloat() / bytesTotal.toFloat()
-                    emit(progress.coerceIn(0f, 1f))
-                } else {
-                    emit(0f)
+                        when (status) {
+                            DownloadManager.STATUS_SUCCESSFUL -> {
+                                emit(1f)
+                                downloading = false
+                            }
+                            DownloadManager.STATUS_FAILED -> {
+                                downloading = false
+                                throw Exception("Download failed (error $reason)")
+                            }
+                        }
+                    } else {
+                        // Row was removed (e.g. user cancelled the download from notification shade)
+                        downloading = false
+                        throw CancellationException("Download cancelled")
+                    }
                 }
 
-                when (status) {
-                    DownloadManager.STATUS_SUCCESSFUL -> {
-                        emit(1f)
-                        downloading = false
-                    }
-                    DownloadManager.STATUS_FAILED -> {
-                        downloading = false
-                        throw Exception("Download failed")
-                    }
+                if (downloading) {
+                    delay(500)
                 }
-                cursor.close()
-            } else {
-                cursor?.close()
             }
-
-            if (downloading) {
-                delay(500)
+        } catch (e: CancellationException) {
+            downloadManager.remove(downloadId)
+            if (destinationFile.exists()) {
+                destinationFile.delete()
             }
+            throw e
         }
     }
 
@@ -115,25 +152,29 @@ class UpdateManager(private val context: Context) {
 
     fun promptInstallApk(version: String): Boolean {
         val apkFile = getTargetApkFile(version)
-        if (!apkFile.exists()) return false
+        if (!apkFile.exists() || apkFile.length() == 0L) return false
 
         if (!canInstallUnknownApps()) {
             return false
         }
 
-        val contentUri = FileProvider.getUriForFile(
-            context,
-            "${context.packageName}.fileprovider",
-            apkFile
-        )
+        return try {
+            val contentUri = FileProvider.getUriForFile(
+                context,
+                "${context.packageName}.fileprovider",
+                apkFile
+            )
 
-        val installIntent = Intent(Intent.ACTION_VIEW).apply {
-            setDataAndType(contentUri, "application/vnd.android.package-archive")
-            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val installIntent = Intent(Intent.ACTION_VIEW).apply {
+                setDataAndType(contentUri, "application/vnd.android.package-archive")
+                addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+
+            context.startActivity(installIntent)
+            true
+        } catch (_: Exception) {
+            false
         }
-
-        context.startActivity(installIntent)
-        return true
     }
 }

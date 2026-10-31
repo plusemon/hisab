@@ -132,6 +132,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        viewModel.onAppResumed()
+    }
+
     override fun onStop() {
         super.onStop()
         // Auto-lock when backgrounded if PIN is configured

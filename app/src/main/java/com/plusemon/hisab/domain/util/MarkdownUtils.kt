@@ -42,12 +42,14 @@ object MarkdownUtils {
     }
 
     private fun AnnotatedString.Builder.appendFormattedLine(line: String) {
+        // Convert markdown links [label](url) -> label
+        val linkCleanedLine = line.replace(Regex("\\[([^\\]]+)]\\([^)]+\\)"), "$1")
         val regex = Regex("\\*\\*(.*?)\\*\\*|__(.*?)__")
         var lastIndex = 0
 
-        for (match in regex.findAll(line)) {
+        for (match in regex.findAll(linkCleanedLine)) {
             if (match.range.first > lastIndex) {
-                append(line.substring(lastIndex, match.range.first))
+                append(linkCleanedLine.substring(lastIndex, match.range.first))
             }
 
             val boldText = match.groups[1]?.value ?: match.groups[2]?.value ?: ""
@@ -58,8 +60,8 @@ object MarkdownUtils {
             lastIndex = match.range.last + 1
         }
 
-        if (lastIndex < line.length) {
-            append(line.substring(lastIndex))
+        if (lastIndex < linkCleanedLine.length) {
+            append(linkCleanedLine.substring(lastIndex))
         }
     }
 
@@ -67,14 +69,25 @@ object MarkdownUtils {
         if (notes.isBlank()) return notes
         val lines = notes.lines()
         val distinctLines = mutableListOf<String>()
-        for (line in lines) {
-            val trimmed = line.trim()
-            if (trimmed.isEmpty()) {
-                if (distinctLines.isNotEmpty() && distinctLines.last().isNotBlank()) {
+        for (rawLine in lines) {
+            // Skip auto-generated "Full Changelog" lines
+            if (rawLine.contains("Full Changelog", ignoreCase = true) && rawLine.contains("http", ignoreCase = true)) {
+                continue
+            }
+            // Strip trailing "in https://github.com/..." from GitHub auto-generated PR lines and raw URLs
+            val cleanedLine = rawLine
+                .replace(Regex("\\s+in\\s+https?://\\S+"), "")
+                .replace(Regex("\\[([^\\]]+)]\\([^)]+\\)"), "$1")
+                .replace(Regex("https?://\\S+"), "")
+                .trimEnd()
+
+            val trimmed = cleanedLine.trim()
+            if (trimmed.isEmpty() || trimmed == "## What's Changed" || trimmed == "### What's Changed") {
+                if (trimmed.isEmpty() && distinctLines.isNotEmpty() && distinctLines.last().isNotBlank()) {
                     distinctLines.add("")
                 }
             } else if (distinctLines.none { it.trim() == trimmed }) {
-                distinctLines.add(line)
+                distinctLines.add(cleanedLine)
             }
         }
         return distinctLines.joinToString("\n").trim()

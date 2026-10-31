@@ -64,9 +64,9 @@ sealed class UpdateUiState {
     object Checking : UpdateUiState()
     data class Available(val updateInfo: UpdateInfo, val isManual: Boolean) : UpdateUiState()
     data class UpToDate(val currentVersion: String) : UpdateUiState()
-    data class Downloading(val updateInfo: UpdateInfo, val progress: Float) : UpdateUiState()
-    data class Downloaded(val updateInfo: UpdateInfo) : UpdateUiState()
-    data class PermissionNeeded(val updateInfo: UpdateInfo) : UpdateUiState()
+    data class Downloading(val updateInfo: UpdateInfo, val progress: Float, val isManual: Boolean = false) : UpdateUiState()
+    data class Downloaded(val updateInfo: UpdateInfo, val isManual: Boolean = false) : UpdateUiState()
+    data class PermissionNeeded(val updateInfo: UpdateInfo, val isManual: Boolean = false) : UpdateUiState()
 }
 
 data class CategorySpendProgress(
@@ -1956,9 +1956,20 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         return false
     }
 
+    private var suppressNextAutoLock = false
+
     fun lockApp() {
+        if (suppressNextAutoLock) return
         if (_settings.value.pinEnabled && _settings.value.pinCode.isNotBlank()) {
             _isAppLocked.value = true
+        }
+    }
+
+    fun onAppResumed() {
+        suppressNextAutoLock = false
+        val state = _updateUiState.value
+        if (state is UpdateUiState.PermissionNeeded && updateManager.canInstallUnknownApps()) {
+            promptInstallOrRequestPermission(state.updateInfo, state.isManual)
         }
     }
 
@@ -2068,13 +2079,18 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             if (isManual) {
                 _updateUiState.value = UpdateUiState.Checking
             }
-            _appSyncStatus.value = AppSyncStatus.CheckingUpdates
+            if (_appSyncStatus.value is AppSyncStatus.Synced) {
+                _appSyncStatus.value = AppSyncStatus.CheckingUpdates
+            }
             val currentVersion = VersionUtils.cleanVersion(com.plusemon.hisab.BuildConfig.VERSION_NAME)
+            withContext(Dispatchers.IO) {
+                updateManager.cleanupOldApks(currentVersion)
+            }
             val release = updateRepository.fetchLatestRelease()
 
             if (release != null && VersionUtils.isVersionNewer(currentVersion, release.version)) {
                 val dismissedVersion = updateManager.getDismissedVersion()
-                if (!isManual && release.version == dismissedVersion) {
+                if (!isManual && VersionUtils.cleanVersion(release.version) == dismissedVersion) {
                     _updateUiState.value = UpdateUiState.Idle
                 } else {
                     _updateUiState.value = UpdateUiState.Available(release, isManual)
@@ -2086,7 +2102,9 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                     _updateUiState.value = UpdateUiState.Idle
                 }
             }
-            _appSyncStatus.value = AppSyncStatus.Synced()
+            if (_appSyncStatus.value is AppSyncStatus.CheckingUpdates) {
+                _appSyncStatus.value = AppSyncStatus.Synced()
+            }
         }
     }
 
@@ -2100,38 +2118,52 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun downloadAndInstallUpdate(updateInfo: UpdateInfo) {
+        val isManual = (_updateUiState.value as? UpdateUiState.Available)?.isManual ?: false
         viewModelScope.launch {
-            _updateUiState.value = UpdateUiState.Downloading(updateInfo, 0f)
+            _updateUiState.value = UpdateUiState.Downloading(updateInfo, 0f, isManual)
             try {
                 updateManager.downloadApk(updateInfo).collect { progress ->
-                    _updateUiState.value = UpdateUiState.Downloading(updateInfo, progress)
+                    _updateUiState.value = UpdateUiState.Downloading(updateInfo, progress, isManual)
                 }
-                promptInstallOrRequestPermission(updateInfo)
+                promptInstallOrRequestPermission(updateInfo, isManual)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                _updateUiState.value = UpdateUiState.Idle
             } catch (e: Exception) {
-                _snackbarMessage.emit("Download failed: ${e.message}")
+                val isBn = _settings.value.language == "bn"
+                _snackbarMessage.emit(
+                    if (isBn) "আপডেট ডাউনলোড ব্যর্থ হয়েছে: ${e.message}" else "Download failed: ${e.message}"
+                )
                 _updateUiState.value = UpdateUiState.Idle
             }
         }
     }
 
-    fun promptInstallOrRequestPermission(updateInfo: UpdateInfo) {
+    fun promptInstallOrRequestPermission(updateInfo: UpdateInfo, isManual: Boolean = false) {
         if (!updateManager.canInstallUnknownApps()) {
-            _updateUiState.value = UpdateUiState.PermissionNeeded(updateInfo)
+            _updateUiState.value = UpdateUiState.PermissionNeeded(updateInfo, isManual)
         } else {
+            suppressNextAutoLock = true
             val launched = updateManager.promptInstallApk(updateInfo.version)
             if (launched) {
-                _updateUiState.value = UpdateUiState.Downloaded(updateInfo)
+                _updateUiState.value = UpdateUiState.Downloaded(updateInfo, isManual)
             } else {
-                _updateUiState.value = UpdateUiState.PermissionNeeded(updateInfo)
+                suppressNextAutoLock = false
+                _updateUiState.value = UpdateUiState.PermissionNeeded(updateInfo, isManual)
             }
         }
     }
 
     fun openInstallPermissionSettings() {
+        suppressNextAutoLock = true
         updateManager.openInstallPermissionSettings()
     }
 
     fun retryInstall(updateInfo: UpdateInfo) {
-        promptInstallOrRequestPermission(updateInfo)
+        val isManual = when (val s = _updateUiState.value) {
+            is UpdateUiState.PermissionNeeded -> s.isManual
+            is UpdateUiState.Downloaded -> s.isManual
+            else -> false
+        }
+        promptInstallOrRequestPermission(updateInfo, isManual)
     }
 }

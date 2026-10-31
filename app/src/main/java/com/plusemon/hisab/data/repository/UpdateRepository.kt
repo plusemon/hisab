@@ -3,6 +3,7 @@ package com.plusemon.hisab.data.repository
 import android.util.Log
 import com.plusemon.hisab.data.model.UpdateInfo
 import com.plusemon.hisab.domain.util.MarkdownUtils
+import com.plusemon.hisab.domain.util.VersionUtils
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
@@ -31,38 +32,47 @@ class UpdateRepository {
                 val bodyString = response.body?.string() ?: return@withContext null
                 val jsonArray = JSONArray(bodyString)
                 if (jsonArray.length() == 0) return@withContext null
-                val json = jsonArray.getJSONObject(0)
 
-                val tagName = json.optString("tag_name", "")
-                if (tagName.isBlank()) return@withContext null
-                val version = tagName.trim().removePrefix("v").removePrefix("V")
+                for (rIndex in 0 until jsonArray.length()) {
+                    val json = jsonArray.optJSONObject(rIndex) ?: continue
+                    if (json.optBoolean("draft", false) || json.optBoolean("prerelease", false)) {
+                        continue
+                    }
 
-                val rawReleaseNotes = json.optString("body", "")
-                val releaseNotes = MarkdownUtils.deduplicateReleaseNotes(rawReleaseNotes)
+                    val tagName = json.optString("tag_name", "")
+                    if (tagName.isBlank()) continue
+                    val version = VersionUtils.cleanVersion(tagName)
+                    if (version.isBlank()) continue
 
-                val assets = json.optJSONArray("assets") ?: return@withContext null
-                var downloadUrl: String? = null
+                    val assets = json.optJSONArray("assets") ?: continue
+                    var downloadUrl: String? = null
 
-                for (i in 0 until assets.length()) {
-                    val asset = assets.getJSONObject(i)
-                    val assetName = asset.optString("name", "")
-                    if (assetName.endsWith(".apk", ignoreCase = true)) {
-                        val url = asset.optString("browser_download_url", "")
-                        if (url.isNotBlank()) {
-                            downloadUrl = url
-                            break
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.optJSONObject(i) ?: continue
+                        val assetName = asset.optString("name", "")
+                        if (assetName.endsWith(".apk", ignoreCase = true)) {
+                            val url = asset.optString("browser_download_url", "")
+                            if (url.isNotBlank()) {
+                                downloadUrl = url
+                                break
+                            }
                         }
                     }
+
+                    if (downloadUrl.isNullOrBlank()) continue
+
+                    val rawReleaseNotes = json.optString("body", "")
+                    val releaseNotes = MarkdownUtils.deduplicateReleaseNotes(rawReleaseNotes)
+
+                    return@withContext UpdateInfo(
+                        version = version,
+                        rawTagName = tagName,
+                        downloadUrl = downloadUrl,
+                        releaseNotes = releaseNotes
+                    )
                 }
 
-                if (downloadUrl.isNullOrBlank()) return@withContext null
-
-                UpdateInfo(
-                    version = version,
-                    rawTagName = tagName,
-                    downloadUrl = downloadUrl,
-                    releaseNotes = releaseNotes
-                )
+                null
             }
         } catch (e: Exception) {
             Log.w("UpdateRepository", "Silent check for update skipped or unavailable: ${e.message}")
