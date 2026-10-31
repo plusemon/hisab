@@ -163,7 +163,19 @@ object Localization {
         THIS_YEAR,
         ALL_TIME,
         ALL_ACCOUNTS,
-        NO_MATCHING_TRANSACTIONS
+        NO_MATCHING_TRANSACTIONS,
+        NEXT_STEP,
+        PREVIOUS_STEP,
+        CONFIRM_AND_SAVE,
+        CONFIRM_TRANSACTION,
+        STEP_1_INDICATOR,
+        STEP_2_INDICATOR,
+        STEP_1_PROGRESS,
+        STEP_2_PROGRESS,
+        TRANSACTION_PREVIEW,
+        TRANSACTION_SUMMARY,
+        ATTACHED_RECEIPT,
+        CONFIRMATION_NOTICE
     }
 
     private val bnMap: Map<Key, String> = mapOf(
@@ -327,7 +339,19 @@ object Localization {
         Key.THIS_YEAR to "এই বছর",
         Key.ALL_TIME to "সব সময়",
         Key.ALL_ACCOUNTS to "সব অ্যাকাউন্ট",
-        Key.NO_MATCHING_TRANSACTIONS to "কোনো লেনদেন পাওয়া যায়নি"
+        Key.NO_MATCHING_TRANSACTIONS to "কোনো লেনদেন পাওয়া যায়নি",
+        Key.NEXT_STEP to "পরবর্তী",
+        Key.PREVIOUS_STEP to "আগের ধাপ",
+        Key.CONFIRM_AND_SAVE to "নিশ্চিত করুন ও সংরক্ষণ",
+        Key.CONFIRM_TRANSACTION to "লেনদেন নিশ্চিতকরণ",
+        Key.STEP_1_INDICATOR to "ধাপ ১: তথ্য এন্ট্রি",
+        Key.STEP_2_INDICATOR to "ধাপ ২: প্রিভিউ ও নিশ্চিতকরণ",
+        Key.STEP_1_PROGRESS to "ধাপ ১ এর ২",
+        Key.STEP_2_PROGRESS to "ধাপ ২ এর ২",
+        Key.TRANSACTION_PREVIEW to "লেনদেন পূর্বরূপ",
+        Key.TRANSACTION_SUMMARY to "লেনদেনের সারাংশ",
+        Key.ATTACHED_RECEIPT to "সংযুক্ত রসিদ",
+        Key.CONFIRMATION_NOTICE to "লেনদেনটি সংরক্ষণ করতে নিচের বাটনে ট্যাপ করুন। পরিবর্তন করতে চাইলে 'আগের ধাপ' বাটনে চাপুন।"
     )
 
     private val enMap: Map<Key, String> = mapOf(
@@ -491,7 +515,19 @@ object Localization {
         Key.THIS_YEAR to "This Year",
         Key.ALL_TIME to "All Time",
         Key.ALL_ACCOUNTS to "All Accounts",
-        Key.NO_MATCHING_TRANSACTIONS to "No matching transactions"
+        Key.NO_MATCHING_TRANSACTIONS to "No matching transactions",
+        Key.NEXT_STEP to "Next",
+        Key.PREVIOUS_STEP to "Back",
+        Key.CONFIRM_AND_SAVE to "Confirm & Save",
+        Key.CONFIRM_TRANSACTION to "Confirm Transaction",
+        Key.STEP_1_INDICATOR to "Step 1: Details",
+        Key.STEP_2_INDICATOR to "Step 2: Preview & Confirm",
+        Key.STEP_1_PROGRESS to "Step 1 of 2",
+        Key.STEP_2_PROGRESS to "Step 2 of 2",
+        Key.TRANSACTION_PREVIEW to "Transaction Preview",
+        Key.TRANSACTION_SUMMARY to "Transaction Summary",
+        Key.ATTACHED_RECEIPT to "Attached Receipt",
+        Key.CONFIRMATION_NOTICE to "Tap 'Confirm & Save' to record this transaction, or 'Back' to make changes."
     )
 
     fun getString(key: Key, isBangla: Boolean): String {

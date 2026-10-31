@@ -1,70 +1,81 @@
-# Mobile-Responsive App Header Redesign
+# Two-Step Transaction Entry & Preview Confirmation
 
-Redesign the top navigation header into a sleek, single-row mobile-responsive layout that eliminates text truncation and visual crowding across all screen widths and languages (Bengali and English). By unifying network connectivity and cloud sync states into a single adaptive status pill and moving it out of the greeting text line, the user's greeting and display name always have generous breathing room.
+Convert the transaction creation flow from an immediate-save single form into an intuitive, polished **2-step workflow** across both the Quick Add Bottom Sheet and the full Add/Edit Transaction Screen. Step 1 collects transaction parameters with live input validation, and Step 2 presents a high-clarity **Confirmation & Preview screen** featuring a full receipt summary, balance forecast calculation, back/edit capability, and a final "Confirm & Save" action.
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following design choices have been confirmed from your preferences and will guide the implementation:
+> The following architectural decisions were confirmed based on your preferences:
 
-- **Confirmed Decision 1 — Single Compact Header Row**: Keep the header as a single compact horizontal bar with balanced proportions, adaptive spacing (`BoxWithConstraints`), and compact action controls so the greeting and user name never clip or collide with right-side buttons.
-- **Confirmed Decision 2 — Unified Connectivity & Sync Pill**: Merge the separate Wi-Fi network icon and cloud sync badge into one cohesive, interactive status pill in the right-hand action cluster. Tapping the pill triggers manual cloud sync and shows a brief status tooltip/feedback.
+- **Confirmed Decision 1 — Multi-Step Transition**: Step 1 transitions smoothly into Step 2 within the same bottom sheet and screen using animated layout transitions, avoiding disjointed dialog popups.
+- **Confirmed Decision 2 — Full Receipt Summary**: Step 2 displays a complete transaction summary (Type badge, Amount, Category with icon badge, From/To Accounts, Date & Time, Note, Receipt preview, Fee/Exchange rate) alongside the interactive Balance Forecast Card (`TransactionBalancePreviewCard`).
+- **Confirmed Decision 3 — Unified Support Across Forms**: Both the Quick Add Bottom Sheet (`AddTransactionBottomSheet.kt`) and the full Add/Edit Screen (`AddEditTransactionScreen.kt`) implement this two-step confirmation flow, with hardware/system back button handling to return safely from Step 2 to Step 1 without data loss.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Replaces the crowded 4-widget header arrangement (where the sync status badge expanded next to the greeting text and collided with three large right-side buttons) with a responsive single-row header.
-- **Target Audience / Persona**: Mobile users tracking daily finances in Bengali or English on compact handheld screens (320dp–412dp width) as well as wider devices.
+- **What It Does**: Separates entering transaction details from the permanent save action. In Step 1, the user enters amount, account, category, date, notes, and receipt photo. Tapping "পরবর্তী" / "Next" verifies all required fields and transitions to Step 2. In Step 2, the user reviews a clear receipt card and the projected balance impact before tapping "নিশ্চিত করুন ও সংরক্ষণ" ("Confirm & Save").
+- **Target Audience / Persona**: Users managing personal and shop finances who need confidence that every transaction is logged to the correct account and category with exact amounts before balances are altered.
 - **Key Value**:
-  - **Zero Text Clipping**: Removing the expanding sync badge from the greeting line ensures `"শুভ অপরাহ্ন"` / `"Good Afternoon"` and the user's name render cleanly without awkward mid-word truncation.
-  - **Unified Status Clarity**: Users see a single, unambiguous indicator for offline mode, active syncing/saving, sync errors, or synced state—instead of two competing status badges (`RealTimeStatusBadge` + `NetworkStatusIcon`).
-  - **Responsive Adaptation**: Automatically adapts padding, pill density, and typography based on available screen width (`BoxWithConstraints`).
+  - **Prevents Costly Accounting Errors**: Users visually verify the before-and-after account balance and category categorization before committing.
+  - **Zero Data Loss on Revisions**: Users can easily tap "আগের ধাপ" / "Back" or swipe back from Step 2 to edit any field in Step 1 with all entered data completely intact.
+  - **Clean, Uncluttered UI**: Step 1 focuses purely on data entry without premature balance cards crowding the viewport; Step 2 focuses purely on verification and commitment.
 
 ---
 
 ## 2. User Experience & Visual Design
 
 - **Key User Flows**:
-  1. **Normal Online & Synced State**: The left side displays the user's avatar, time-of-day greeting, and full display name. The right side displays three compact, unified controls: the **Unified Status Pill** (showing a subtle emerald cloud-check/online badge), the **Language Switcher Pill** (`বাং` / `EN`), and the **Theme Switcher Button**.
-  2. **Active Syncing / Saving State**: When a transaction is saved or synced, the Unified Status Pill smoothly animates to show a compact progress spinner and a concise status label (or icon-only on ultra-narrow screens `< 360dp`), without pushing or clipping the user's greeting text.
-  3. **Offline State**: When network connectivity drops, the Unified Status Pill immediately reflects offline status with an amber/red offline indicator so the user knows changes are stored locally until connectivity returns.
-  4. **Interactive Actions**:
-     - Tapping the **Profile section** (Avatar + Greeting + Name) navigates to the user profile/settings screen.
-     - Tapping the **Unified Status Pill** triggers an immediate sync (`onSyncClick`).
-     - Tapping the **Language Pill** toggles between Bengali (`বাং`) and English (`EN`).
-     - Tapping the **Theme Button** opens the dropdown menu for System Default, Light Mode, and Dark Mode.
+  1. **Step 1: Data Entry & Validation**:
+     - User selects transaction type (Expense, Income, Transfer) and enters amount using quick-amount chips (+50, +100, +500, +1000, +5000) or manual keypad.
+     - User selects Account, Category, Date/Time, Note, and optional Receipt image.
+     - The bottom action row shows:
+       - **বাতিল (Cancel)**: Closes the sheet/screen.
+       - **পরবর্তী (Next)**: Prominent button with an arrow icon (`Icons.AutoMirrored.Filled.ArrowForward`).
+     - Tapping **পরবর্তী**: Validates that amount > 0, account is valid, and (for transfers) source and destination accounts differ. If validation passes, smoothly transitions to Step 2.
+  2. **Step 2: Preview & Confirmation**:
+     - **Header**: Step progress pill (`ধাপ ২ এর ২` / `Step 2 of 2`) and transaction type badge (খরচ / আয় / ট্রান্সফার).
+     - **Hero Amount Banner**: Large bold amount with currency symbol (`৳ ৫০০.০০`), styled with color-coding (Expense Red, Income Green, Transfer Blue).
+     - **Full Receipt Card**:
+       - Category with vibrant icon and color badge.
+       - Source Account (and Target Account for Transfers).
+       - Formatted Date & Time (in Bengali or English per user setting).
+       - Note / Remarks (if entered).
+       - Receipt photo thumbnail with tap-to-expand preview (if attached).
+       - Transfer fee & exchange rate details (if applicable).
+     - **Balance Forecast Card**: The rich `TransactionBalancePreviewCard` showing current balance, deducted/added amount, and the resulting future balance.
+     - **Bottom Actions**:
+       - **আগের ধাপ (Back)**: Secondary button with back arrow (`Icons.AutoMirrored.Filled.ArrowBack`) to return to Step 1 and tweak any values.
+       - **নিশ্চিত করুন (Confirm & Save)**: Primary high-contrast button with checkmark icon (`Icons.Default.Check`) that executes the repository save, triggers sync, and dismisses the bottom sheet / screen with positive feedback.
+  3. **Back Navigation Handling (`BackHandler`)**:
+     - When on Step 2, pressing the Android system back gesture/button takes the user back to Step 1 instead of abruptly dismissing the dialog or screen.
 
 - **Visual Identity & Theme**:
-  - *Aesthetic Direction*: Clean, modern fintech minimalism matching Hisab's signature Emerald & Slate flat design system.
-  - *Color Palette & Mood*:
-    - Surface background using `MaterialTheme.colorScheme.surface` with a subtle `outlineVariant` bottom divider.
-    - Status accents: Emerald (`#10B981` / `#047857`) for Online & Synced, Indigo (`#4338CA`) for Syncing, Amber (`#B45309`) for Saving/Pending, and Crimson (`#DC2626`) for Offline or Sync Error—with dark-mode-aware container tints.
-  - *Typography & Hierarchy*:
-    - Greeting label: `labelSmall` (`11.5.sp`), muted `onSurfaceVariant`, single line with ellipsis.
-    - User display name: `titleMedium` (`15.sp`, `FontWeight.SemiBold`), `onSurface`, single line with ellipsis.
-    - Action pills: `labelMedium` (`12.5.sp`, `FontWeight.Bold`) with crisp 16dp–18dp icons.
-  - *Component Styling & Layout*:
-    - Consistent `36.dp` control height across the Unified Status Pill, Language Pill, and Theme Button with `12.dp` rounded corners and `6.dp` horizontal spacing.
-    - Responsive breakpoint using `BoxWithConstraints`: on compact widths (`< 380.dp`), the Unified Status Pill shows a compact icon/spinner (expanding with short text only on error or tap), while on wider screens (`>= 380.dp`) it comfortably displays both the status icon and short label.
+  - *Color Palette*:
+    - Expense: Vibrant Crimson/Coral (`#EF4444`)
+    - Income: Emerald Green (`#10B981`)
+    - Transfer: Indigo/Sky Blue (`#3B82F6`)
+    - Containers: M3 tonal elevation and soft card backgrounds (`surfaceVariant` with subtle borders).
+  - *Typography*:
+    - Large display numeral for hero amount (`titleLarge` / `headlineSmall`, bold).
+    - Legible labels and values adhering to M3 density and localized Bengali numerals.
 
 - **Interactive Feedback & Motion**:
-  - Smooth `AnimatedContent` and `animateColorAsState` transitions when switching between Online/Synced, Syncing, Saving, and Offline states.
-  - Proper Material ripple feedback on all interactive pills and avatar area.
+  - Horizontal slide & fade transitions (`AnimatedContent` with `slideInHorizontally` / `slideOutHorizontally`) between Step 1 and Step 2.
+  - Ripple feedback on all touch targets (> 48dp).
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: Relocate Sync Status out of the Greeting Row into a Unified Status Pill**
-  - *Chosen Approach*: Combine `isNetworkConnected` and `AppSyncStatus` into one unified component placed in the right-side action cluster.
-  - *Why*: Previously, `RealTimeStatusBadge` sat inside the left-hand greeting `Row`, competing with the greeting text for horizontal space while a separate `NetworkStatusIcon` sat on the right. Combining them frees up ~70dp of width for the user's greeting and name while eliminating redundant status icons.
-  - *Alternatives Considered*: Keeping two separate icons on the right (rejected because 4 separate buttons on the right still crowd narrow screens).
-
-- **Decision 2: Adaptive Width Responsiveness via `BoxWithConstraints`**
-  - *Chosen Approach*: Measure the header's available width dynamically and scale spacing, avatar size (`36.dp` vs `40.dp`), and status label visibility according to available horizontal space.
-  - *Why*: Ensures small phones (e.g., 320dp–360dp width or large system font scales) never experience clipped text, while standard and large phones/tablets enjoy rich status labels.
-  - *Alternatives Considered*: Fixed padding and fixed pill widths (rejected as it fails when Bengali text or display names are long).
+- **Decision 1: In-Place Sheet Step Transition vs. Popup Dialog**
+  - *Chosen Approach*: Maintain a single bottom sheet / screen container and swap contents via `step: Int` state (1 or 2) with `AnimatedContent`.
+  - *Why*: Popup modal dialogs on top of bottom sheets cause window focus conflicts, double scrims, and awkward keyboard resizing on mobile devices. An in-place step transition is smoother and native-feeling.
+- **Decision 2: Retain All State During Back-Navigation**
+  - *Chosen Approach*: State variables (`amountText`, `selectedAccountId`, `selectedCategory`, `note`, `receiptUriStr`, etc.) are maintained at the top of the composable so switching between Step 1 and Step 2 never resets user input.
+- **Decision 3: Keep Quick Date Chips & Quick Amount in Step 1**
+  - *Chosen Approach*: Quick-entry helpers remain in Step 1 for fast input, while Step 2 is dedicated solely to review and verification.
 
 ---
 
@@ -73,34 +84,46 @@ Redesign the top navigation header into a sleek, single-row mobile-responsive la
 - **Architecture & Component Diagram**:
 
 ```
-┌─────────────────────────────────────────────────────────────────────────┐
-│                       Responsive DashboardHeader                        │
-│  (BoxWithConstraints: adapts spacing & pill density by maxWidth)        │
-├───────────────────────────────────┬─────────────────────────────────────┤
-│  Left: Profile Identity Cluster   │  Right: Compact Action Cluster      │
-│  (weight = 1f, clickable)         │  (spacedBy = 6.dp, height = 36.dp)  │
-│  ┌────────┐  ┌─────────────────┐  │  ┌───────────┐ ┌────────┐ ┌──────┐  │
-│  │ Avatar │  │ Greeting Text   │  │  │  Unified  │ │  Lang  │ │Theme │  │
-│  │ 36-40dp│  │ Display Name    │  │  │Status Pill│ │  Pill  │ │ Menu │  │
-│  └────────┘  └─────────────────┘  │  └─────┬─────┘ └───┬────┘ └──┬───┘  │
-└───────────────────────────────────┴────────┼───────────┼─────────┼──────┘
-                                             │           │         │
-                                             ▼           ▼         ▼
-                                        onSyncClick  onToggle  onSetTheme
-                                                     Language     Mode
+┌────────────────────────────────────────────────────────────────────────┐
+│                   AddTransactionBottomSheet / Screen                   │
+│                                                                        │
+│  State: currentStep (1 = Input, 2 = Confirmation)                      │
+│                                                                        │
+│  ┌─────────────────────────────────┐   ┌─────────────────────────────┐ │
+│  │             STEP 1              │   │           STEP 2            │ │
+│  │       (Input & Form)            │   │   (Preview & Confirmation)  │ │
+│  │                                 │   │                             │ │
+│  │ • Transaction Type Chips        │   │ • Step Indicator (Step 2/2) │ │
+│  │ • Amount Input + Quick Chips    │   │ • Hero Amount Display       │ │
+│  │ • Account Selector Chips        │──►│ • Full Receipt Summary Card │ │
+│  │ • Category Dropdown             │   │ • Balance Forecast Card     │ │
+│  │ • Date & Time Selector          │   │                             │ │
+│  │ • Note & Receipt Image Picker   │   │ [Back]    [Confirm & Save]  │ │
+│  │                                 │   │   │              │          │ │
+│  │ [Cancel]             [Next ──►] │   └───┼──────────────┼──────────┘ │
+│  └─────────────────────────────────┘       │              ▼            │
+│                       ▲                    │       viewModel.addTx()   │
+│                       └────────────────────┘       dismiss & sync      │
+│                            (Edit / Back)                               │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
-- **Data Model & State**:
-  - **Unified Status Resolution**:
-    1. If `!isNetworkConnected`: Display **Offline** state (`WifiOff` icon, offline tint, label `"অফলাইন"` / `"Offline"`).
-    2. Else if `syncStatus is Saving`: Display **Saving** state (spinner + `"সংরক্ষণ..."` / `"Saving"`).
-    3. Else if `syncStatus is Syncing` or `CheckingUpdates`: Display **Syncing** state (spinner + `"সিঙ্ক..."` / `"Syncing"`).
-    4. Else if `syncStatus is Error`: Display **Sync Error** state (`ErrorOutline` icon + `"ত্রুটি"` / `"Error"`).
-    5. Else (`Synced`, `Saved`, `Idle`): Display **Online & Synced** state (`CloudDone` icon, emerald tint, compact icon-only pill by default on handheld screens so the header stays ultra-clean, or tap-to-sync).
-
-- **Interactive Component & State Mapping**:
-  - **Profile Cluster**: Invokes `onProfileClick()` with rounded clip ripple.
-  - **Unified Status Pill (`realtime_status_badge` / `network_status_icon`)**: Preserves test tags and click handler `onSyncClick()` so manual sync and existing automated tests continue to work seamlessly.
-  - **Language Toggle Pill (`header_language_btn`)**: Compact pill with `Translate` icon and `"বাং"` / `"EN"` label invoking `onToggleLanguage()`.
-  - **Theme Switcher (`header_theme_btn`)**: Compact square-rounded icon button opening the Material 3 `DropdownMenu` with System Default, Light Mode, and Dark Mode options.
-  - **Detail Screen App Bar Consistency**: Keep `DetailTopAppBar` clean and aligned with the updated compact status indicator styling.
+- **Interactive State & Logic**:
+  - `var currentStep by remember { mutableStateOf(1) }`
+  - In Step 1:
+    - Button click executes validation:
+      - Valid amount > 0: `errorMessage = null; currentStep = 2`
+      - Invalid amount: `errorMessage = "অনুগ্রহ করে সঠিক পরিমাণ লিখুন"`
+  - In Step 2:
+    - `BackHandler(enabled = currentStep == 2) { currentStep = 1 }`
+    - "Back" button: `currentStep = 1`
+    - "Confirm" button: calls `handleSave(selectedType)` which writes to Room database, schedules sync, and invokes `closeSheet()`.
+- **String Localization Resources**:
+  - Add localized strings for Step 1 / Step 2 indicators:
+    - `step_1_of_2`: `"ধাপ ১ এর ২"` / `"Step 1 of 2"`
+    - `step_2_of_2`: `"ধাপ ২ এর ২"` / `"Step 2 of 2"`
+    - `next_step`: `"পরবর্তী"` / `"Next"`
+    - `previous_step`: `"আগের ধাপ"` / `"Back"`
+    - `confirm_and_save`: `"নিশ্চিত করুন ও সংরক্ষণ"` / `"Confirm & Save"`
+    - `transaction_preview`: `"লেনদেন পূর্বরূপ"` / `"Transaction Preview"`
+    - `confirm_transaction`: `"লেনদেন নিশ্চিতকরণ"` / `"Confirm Transaction"`

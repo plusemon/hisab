@@ -4,6 +4,11 @@ import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -25,6 +30,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.automirrored.filled.TrendingDown
 import androidx.compose.material.icons.automirrored.filled.TrendingUp
@@ -168,12 +175,40 @@ fun AddTransactionBottomSheet(
         }
     }
 
+    var currentStep by remember { mutableStateOf(1) }
+
+    BackHandler(enabled = currentStep == 2) {
+        currentStep = 1
+    }
+
     val closeSheet = {
         coroutineScope.launch {
             sheetState.hide()
         }.invokeOnCompletion {
             if (!sheetState.isVisible) {
                 onDismiss()
+            }
+        }
+    }
+
+    val handleNext: (TransactionType) -> Unit = { activeType ->
+        val amount = amountText.toDoubleOrNull() ?: 0.0
+        if (amount <= 0.0) {
+            errorMessage = if (isBn) "সঠিক টাকার পরিমাণ লিখুন" else "Please enter a valid amount"
+        } else {
+            val effectiveAccountId = if (selectedAccountId > 0L) selectedAccountId else availableAccounts.firstOrNull()?.id ?: 0L
+            if (effectiveAccountId <= 0L) {
+                viewModel.ensureDefaultData()
+                errorMessage = if (isBn) "অনুগ্রহ করে একটি অ্যাকাউন্ট নির্বাচন করুন বা তৈরি করুন" else "Please select or create an account"
+            } else {
+                val effectiveToAccountId = if (selectedToAccountId > 0L) selectedToAccountId else availableAccounts.getOrNull(1)?.id ?: effectiveAccountId
+
+                if (activeType == TransactionType.TRANSFER && effectiveAccountId == effectiveToAccountId) {
+                    errorMessage = if (isBn) "একই অ্যাকাউন্টে স্থানান্তর সম্ভব নয়" else "Source and target accounts must be different"
+                } else {
+                    errorMessage = null
+                    currentStep = 2
+                }
             }
         }
     }
@@ -275,39 +310,66 @@ fun AddTransactionBottomSheet(
             .imePadding()
             .testTag("add_transaction_bottom_sheet")
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp, vertical = 4.dp)
-        ) {
-            // Header: Title and Close button
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text(
-                    text = Localization.getString(Localization.Key.ADD_TRANSACTION, isBn),
-                    style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
-                    fontWeight = FontWeight.Bold,
-                    color = MaterialTheme.colorScheme.onSurface
-                )
-
-                IconButton(
-                    onClick = { closeSheet() },
-                    modifier = Modifier
-                        .size(36.dp)
-                        .testTag("close_sheet_btn")
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Close,
-                        contentDescription = Localization.getString(Localization.Key.CANCEL, isBn),
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+        AnimatedContent(
+            targetState = currentStep,
+            transitionSpec = {
+                if (targetState > initialState) {
+                    slideInHorizontally { width -> width } togetherWith slideOutHorizontally { width -> -width }
+                } else {
+                    slideInHorizontally { width -> -width } togetherWith slideOutHorizontally { width -> width }
                 }
-            }
+            },
+            label = "SheetStepAnimation"
+        ) { step ->
+            if (step == 1) {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .navigationBarsPadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 20.dp, vertical = 4.dp)
+                ) {
+                    // Header: Title with Step indicator + Close button
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                text = Localization.getString(Localization.Key.ADD_TRANSACTION, isBn),
+                                style = MaterialTheme.typography.titleMedium.copy(fontSize = 18.sp),
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.7f)
+                            ) {
+                                Text(
+                                    text = Localization.getString(Localization.Key.STEP_1_PROGRESS, isBn),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
+                            }
+                        }
+
+                        IconButton(
+                            onClick = { closeSheet() },
+                            modifier = Modifier
+                                .size(36.dp)
+                                .testTag("close_sheet_btn")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = Localization.getString(Localization.Key.CANCEL, isBn),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
 
             Spacer(modifier = Modifier.height(12.dp))
 
@@ -838,40 +900,6 @@ fun AddTransactionBottomSheet(
                 }
             }
 
-            // Balance Preview Card (compact, shown when amount > 0)
-            val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
-            val currentBalance = selectedAccountWithBal?.balance ?: 0.0
-            val amountVal = amountText.toDoubleOrNull() ?: 0.0
-            val feeVal = feeText.toDoubleOrNull() ?: 0.0
-
-            if (amountVal > 0.0) {
-                Spacer(modifier = Modifier.height(10.dp))
-                val resultingBalance = when (selectedType) {
-                    TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
-                    TransactionType.INCOME -> currentBalance + amountVal
-                    TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
-                }
-
-                val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
-                val targetCurrentBalance = targetAccountWithBal?.balance
-                val resultingTargetBalance = if (targetCurrentBalance != null) {
-                    targetCurrentBalance + amountVal
-                } else null
-
-                TransactionBalancePreviewCard(
-                    transactionType = selectedType,
-                    currentBalance = currentBalance,
-                    resultingBalance = resultingBalance,
-                    targetCurrentBalance = targetCurrentBalance,
-                    resultingTargetBalance = resultingTargetBalance,
-                    currencySymbol = currSymbol,
-                    isBn = isBn,
-                    accountName = selectedAccountWithBal?.account?.name,
-                    targetAccountName = targetAccountWithBal?.account?.name,
-                    amount = amountVal
-                )
-            }
-
             if (errorMessage != null) {
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
@@ -884,7 +912,7 @@ fun AddTransactionBottomSheet(
 
             Spacer(modifier = Modifier.height(18.dp))
 
-            // Action Buttons: Cancel and Save (compact row, consistent with recurring sheet)
+            // Action Buttons: Cancel and Next (to Step 2 Preview)
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.End,
@@ -900,9 +928,9 @@ fun AddTransactionBottomSheet(
                 Spacer(modifier = Modifier.width(10.dp))
 
                 Button(
-                    onClick = { handleSave(selectedType) },
+                    onClick = { handleNext(selectedType) },
                     modifier = Modifier
-                        .testTag("dialog_save_tx_btn")
+                        .testTag("dialog_next_step_btn")
                         .height(44.dp),
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
@@ -914,23 +942,76 @@ fun AddTransactionBottomSheet(
                         contentColor = Color.White
                     )
                 ) {
-                    Icon(
-                        Icons.Default.Check,
-                        contentDescription = null,
-                        tint = Color.White,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = Localization.getString(Localization.Key.SAVE, isBn),
+                        text = Localization.getString(Localization.Key.NEXT_STEP, isBn),
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold,
                         color = Color.White
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowForward,
+                        contentDescription = null,
+                        tint = Color.White,
+                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
 
             Spacer(modifier = Modifier.height(12.dp))
         }
+    } else {
+        // Step 2: Confirmation & Preview
+        val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
+        val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+        val amountVal = amountText.toDoubleOrNull() ?: 0.0
+        val feeVal = feeText.toDoubleOrNull() ?: 0.0
+
+        val resultingBalance = when (selectedType) {
+            TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
+            TransactionType.INCOME -> currentBalance + amountVal
+            TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
+        }
+
+        val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
+        val targetCurrentBalance = targetAccountWithBal?.balance
+        val resultingTargetBalance = if (targetCurrentBalance != null) {
+            targetCurrentBalance + amountVal
+        } else null
+
+        val selectedCategory = categories.firstOrNull {
+            it.id == (if (selectedType == TransactionType.EXPENSE) selectedExpenseCategoryId else selectedIncomeCategoryId)
+        }
+
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .navigationBarsPadding()
+                .verticalScroll(rememberScrollState())
+                .padding(horizontal = 20.dp, vertical = 4.dp)
+        ) {
+            TransactionConfirmationView(
+                transactionType = selectedType,
+                amount = amountVal,
+                currencySymbol = currSymbol,
+                isBn = isBn,
+                accountName = selectedAccountWithBal?.account?.name,
+                targetAccountName = targetAccountWithBal?.account?.name,
+                category = selectedCategory,
+                dateTimestamp = dateTimestamp,
+                note = note.trim(),
+                receiptUriStr = receiptUriStr,
+                fee = feeVal,
+                exchangeRate = 1.0,
+                currentBalance = currentBalance,
+                resultingBalance = resultingBalance,
+                targetCurrentBalance = targetCurrentBalance,
+                resultingTargetBalance = resultingTargetBalance,
+                onBackClick = { currentStep = 1 },
+                onConfirmSaveClick = { handleSave(selectedType) }
+            )
+        }
+    }
+}
     }
 }

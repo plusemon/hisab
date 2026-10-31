@@ -1,9 +1,14 @@
 package com.plusemon.hisab.ui.screens.transactions
 
 import android.net.Uri
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -32,6 +37,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
+import androidx.compose.material.icons.automirrored.filled.ArrowForward
 import androidx.compose.material.icons.automirrored.filled.Notes
 import androidx.compose.material.icons.filled.AddAPhoto
 import androidx.compose.material.icons.filled.CalendarToday
@@ -100,6 +106,7 @@ import com.plusemon.hisab.ui.theme.TransferBlue
 import com.plusemon.hisab.ui.viewmodel.HisabViewModel
 import com.plusemon.hisab.ui.viewmodel.AccountWithBalance
 import com.plusemon.hisab.ui.components.TransactionBalancePreviewCard
+import com.plusemon.hisab.ui.components.TransactionConfirmationView
 import kotlinx.coroutines.launch
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -267,6 +274,34 @@ fun AddEditTransactionScreen(
         }
     }
 
+    var currentStep by remember { mutableStateOf(1) }
+
+    BackHandler(enabled = currentStep == 2) {
+        currentStep = 1
+    }
+
+    val handleNext: (TransactionType) -> Unit = { targetType ->
+        val amount = amountText.toDoubleOrNull() ?: 0.0
+        if (amount <= 0.0) {
+            errorMessage = if (isBn) "সঠিক টাকার পরিমাণ লিখুন" else "Please enter a valid amount"
+        } else {
+            val effectiveAccountId = if (selectedAccountId > 0L) selectedAccountId else availableAccounts.firstOrNull()?.id ?: 0L
+            if (effectiveAccountId <= 0L) {
+                viewModel.ensureDefaultData()
+                errorMessage = if (isBn) "অনুগ্রহ করে একটি অ্যাকাউন্ট নির্বাচন করুন বা তৈরি করুন" else "Please select or create an account"
+            } else {
+                val effectiveToAccountId = if (selectedToAccountId > 0L) selectedToAccountId else availableAccounts.getOrNull(1)?.id ?: effectiveAccountId
+
+                if (targetType == TransactionType.TRANSFER && effectiveAccountId == effectiveToAccountId) {
+                    errorMessage = if (isBn) "একই অ্যাকাউন্টে স্থানান্তর সম্ভব নয়" else "Source and target accounts must be different"
+                } else {
+                    errorMessage = null
+                    currentStep = 2
+                }
+            }
+        }
+    }
+
     val handleSave: (TransactionType) -> Unit = { targetType ->
         val amount = amountText.toDoubleOrNull() ?: 0.0
         if (amount <= 0.0) {
@@ -325,7 +360,9 @@ fun AddEditTransactionScreen(
 
     Scaffold(
         topBar = {
-            val titleText = if (existingTransaction == null) {
+            val titleText = if (currentStep == 2) {
+                Localization.getString(Localization.Key.CONFIRM_TRANSACTION, isBn)
+            } else if (existingTransaction == null) {
                 when (pagerState.currentPage) {
                     0 -> Localization.getString(Localization.Key.ADD_EXPENSE, isBn)
                     1 -> Localization.getString(Localization.Key.ADD_INCOME, isBn)
@@ -337,10 +374,16 @@ fun AddEditTransactionScreen(
             }
             DetailTopAppBar(
                 title = titleText,
-                onNavigateBack = onNavigateBack,
+                onNavigateBack = {
+                    if (currentStep == 2) {
+                        currentStep = 1
+                    } else {
+                        onNavigateBack()
+                    }
+                },
                 isNetworkConnected = isNetworkConnected,
                 actions = {
-                    if (existingTransaction != null) {
+                    if (existingTransaction != null && currentStep == 1) {
                         IconButton(
                             onClick = {
                                 showDeleteConfirmation = true
@@ -361,161 +404,30 @@ fun AddEditTransactionScreen(
             )
         }
     ) { padding ->
-        if (existingTransaction != null) {
-            // Edit mode: single scrollable column without tabs
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .imePadding()
-                    .verticalScroll(rememberScrollState())
-                    .padding(horizontal = 16.dp, vertical = 8.dp)
-            ) {
-                TransactionFormFields(
-                    type = transactionType,
-                    amountText = amountText,
-                    onAmountChange = {
-                        amountText = it
-                        errorMessage = null
-                    },
-                    currSymbol = currSymbol,
-                    isBn = isBn,
-                    availableAccounts = availableAccounts,
-                    accountsWithBalances = accountsWithBalances,
-                    selectedAccountId = selectedAccountId,
-                    onSelectAccountId = { selectedAccountId = it },
-                    selectedToAccountId = selectedToAccountId,
-                    onSelectToAccountId = { selectedToAccountId = it },
-                    feeText = feeText,
-                    onFeeChange = { feeText = it },
-                    exchangeRateText = exchangeRateText,
-                    categories = typeCategories,
-                    selectedCategoryId = selectedCategoryId,
-                    onSelectCategoryId = { selectedCategoryId = it },
-                    dateTimestamp = dateTimestamp,
-                    onDateChange = { dateTimestamp = it },
-                    note = note,
-                    onNoteChange = { note = it },
-                    receiptUriStr = receiptUriStr,
-                    onPickReceipt = {
-                        photoPickerLauncher.launch(
-                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
-                        )
-                    },
-                    onRemoveReceipt = { receiptUriStr = null },
-                    errorMessage = errorMessage,
-                    onSave = { handleSave(transactionType) },
-                    onEnsureDefaultData = { viewModel.ensureDefaultData() }
-                )
-            }
-        } else {
-            // Add mode: TabRow + Swipeable HorizontalPager
-            Column(
-                modifier = modifier
-                    .fillMaxSize()
-                    .padding(padding)
-                    .imePadding()
-            ) {
-                // Type Selector Tabs (Expense / Income / Transfer)
-                TabRow(
-                    selectedTabIndex = pagerState.currentPage,
-                    containerColor = MaterialTheme.colorScheme.surface,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp, vertical = 6.dp)
-                        .clip(RoundedCornerShape(12.dp)),
-                    indicator = { tabPositions ->
-                        if (pagerState.currentPage < tabPositions.size) {
-                            val indicatorColor = when (pagerState.currentPage) {
-                                0 -> ExpenseRed
-                                1 -> IncomeGreen
-                                else -> TransferBlue
-                            }
-                            TabRowDefaults.SecondaryIndicator(
-                                modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
-                                color = indicatorColor
-                            )
-                        }
-                    }
-                ) {
-                    Tab(
-                        selected = pagerState.currentPage == 0,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(0)
-                            }
-                        },
-                        text = {
-                            Text(
-                                text = Localization.getString(Localization.Key.EXPENSE_SHORT, isBn),
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (pagerState.currentPage == 0) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        modifier = Modifier.testTag("tab_expense")
-                    )
-                    Tab(
-                        selected = pagerState.currentPage == 1,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(1)
-                            }
-                        },
-                        text = {
-                            Text(
-                                text = Localization.getString(Localization.Key.INCOME_SHORT, isBn),
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (pagerState.currentPage == 1) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        modifier = Modifier.testTag("tab_income")
-                    )
-                    Tab(
-                        selected = pagerState.currentPage == 2,
-                        onClick = {
-                            coroutineScope.launch {
-                                pagerState.animateScrollToPage(2)
-                            }
-                        },
-                        text = {
-                            Text(
-                                text = Localization.getString(Localization.Key.TRANSFER_SHORT, isBn),
-                                fontWeight = FontWeight.Bold,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                color = if (pagerState.currentPage == 2) TransferBlue else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        },
-                        modifier = Modifier.testTag("tab_transfer")
-                    )
+        AnimatedContent(
+            targetState = currentStep,
+            transitionSpec = {
+                if (targetState > initialState) {
+                    slideInHorizontally { width -> width } togetherWith slideOutHorizontally { width -> -width }
+                } else {
+                    slideInHorizontally { width -> -width } togetherWith slideOutHorizontally { width -> width }
                 }
-
-                HorizontalPager(
-                    state = pagerState,
-                    modifier = Modifier.fillMaxSize(),
-                    beyondViewportPageCount = 1
-                ) { page ->
-                    val pageType = when (page) {
-                        0 -> TransactionType.EXPENSE
-                        1 -> TransactionType.INCOME
-                        else -> TransactionType.TRANSFER
-                    }
-                    val pageCategories = remember(categories, pageType) {
-                        categories.filter { it.type == pageType }
-                    }
-
+            },
+            label = "AddEditStepTransition"
+        ) { step ->
+            if (step == 1) {
+                if (existingTransaction != null) {
+                    // Edit mode: single scrollable column without tabs
                     Column(
-                        modifier = Modifier
+                        modifier = modifier
                             .fillMaxSize()
+                            .padding(padding)
+                            .imePadding()
                             .verticalScroll(rememberScrollState())
-                            .padding(horizontal = 16.dp, vertical = 6.dp)
+                            .padding(horizontal = 16.dp, vertical = 8.dp)
                     ) {
                         TransactionFormFields(
-                            type = pageType,
+                            type = transactionType,
                             amountText = amountText,
                             onAmountChange = {
                                 amountText = it
@@ -532,7 +444,7 @@ fun AddEditTransactionScreen(
                             feeText = feeText,
                             onFeeChange = { feeText = it },
                             exchangeRateText = exchangeRateText,
-                            categories = pageCategories,
+                            categories = typeCategories,
                             selectedCategoryId = selectedCategoryId,
                             onSelectCategoryId = { selectedCategoryId = it },
                             dateTimestamp = dateTimestamp,
@@ -547,10 +459,211 @@ fun AddEditTransactionScreen(
                             },
                             onRemoveReceipt = { receiptUriStr = null },
                             errorMessage = errorMessage,
-                            onSave = { handleSave(pageType) },
+                            onNext = { handleNext(transactionType) },
                             onEnsureDefaultData = { viewModel.ensureDefaultData() }
                         )
                     }
+                } else {
+                    // Add mode: TabRow + Swipeable HorizontalPager
+                    Column(
+                        modifier = modifier
+                            .fillMaxSize()
+                            .padding(padding)
+                            .imePadding()
+                    ) {
+                        // Type Selector Tabs (Expense / Income / Transfer)
+                        TabRow(
+                            selectedTabIndex = pagerState.currentPage,
+                            containerColor = MaterialTheme.colorScheme.surface,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = 16.dp, vertical = 6.dp)
+                                .clip(RoundedCornerShape(12.dp)),
+                            indicator = { tabPositions ->
+                                if (pagerState.currentPage < tabPositions.size) {
+                                    val indicatorColor = when (pagerState.currentPage) {
+                                        0 -> ExpenseRed
+                                        1 -> IncomeGreen
+                                        else -> TransferBlue
+                                    }
+                                    TabRowDefaults.SecondaryIndicator(
+                                        modifier = Modifier.tabIndicatorOffset(tabPositions[pagerState.currentPage]),
+                                        color = indicatorColor
+                                    )
+                                }
+                            }
+                        ) {
+                            Tab(
+                                selected = pagerState.currentPage == 0,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(0)
+                                    }
+                                },
+                                text = {
+                                    Text(
+                                        text = Localization.getString(Localization.Key.EXPENSE_SHORT, isBn),
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (pagerState.currentPage == 0) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                modifier = Modifier.testTag("tab_expense")
+                            )
+                            Tab(
+                                selected = pagerState.currentPage == 1,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(1)
+                                    }
+                                },
+                                text = {
+                                    Text(
+                                        text = Localization.getString(Localization.Key.INCOME_SHORT, isBn),
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (pagerState.currentPage == 1) IncomeGreen else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                modifier = Modifier.testTag("tab_income")
+                            )
+                            Tab(
+                                selected = pagerState.currentPage == 2,
+                                onClick = {
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(2)
+                                    }
+                                },
+                                text = {
+                                    Text(
+                                        text = Localization.getString(Localization.Key.TRANSFER_SHORT, isBn),
+                                        fontWeight = FontWeight.Bold,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        color = if (pagerState.currentPage == 2) TransferBlue else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                },
+                                modifier = Modifier.testTag("tab_transfer")
+                            )
+                        }
+
+                        HorizontalPager(
+                            state = pagerState,
+                            modifier = Modifier.fillMaxSize(),
+                            beyondViewportPageCount = 1
+                        ) { page ->
+                            val pageType = when (page) {
+                                0 -> TransactionType.EXPENSE
+                                1 -> TransactionType.INCOME
+                                else -> TransactionType.TRANSFER
+                            }
+                            val pageCategories = remember(categories, pageType) {
+                                categories.filter { it.type == pageType }
+                            }
+
+                            Column(
+                                modifier = Modifier
+                                    .fillMaxSize()
+                                    .verticalScroll(rememberScrollState())
+                                    .padding(horizontal = 16.dp, vertical = 6.dp)
+                            ) {
+                                TransactionFormFields(
+                                    type = pageType,
+                                    amountText = amountText,
+                                    onAmountChange = {
+                                        amountText = it
+                                        errorMessage = null
+                                    },
+                                    currSymbol = currSymbol,
+                                    isBn = isBn,
+                                    availableAccounts = availableAccounts,
+                                    accountsWithBalances = accountsWithBalances,
+                                    selectedAccountId = selectedAccountId,
+                                    onSelectAccountId = { selectedAccountId = it },
+                                    selectedToAccountId = selectedToAccountId,
+                                    onSelectToAccountId = { selectedToAccountId = it },
+                                    feeText = feeText,
+                                    onFeeChange = { feeText = it },
+                                    exchangeRateText = exchangeRateText,
+                                    categories = pageCategories,
+                                    selectedCategoryId = selectedCategoryId,
+                                    onSelectCategoryId = { selectedCategoryId = it },
+                                    dateTimestamp = dateTimestamp,
+                                    onDateChange = { dateTimestamp = it },
+                                    note = note,
+                                    onNoteChange = { note = it },
+                                    receiptUriStr = receiptUriStr,
+                                    onPickReceipt = {
+                                        photoPickerLauncher.launch(
+                                            PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)
+                                        )
+                                    },
+                                    onRemoveReceipt = { receiptUriStr = null },
+                                    errorMessage = errorMessage,
+                                    onNext = { handleNext(pageType) },
+                                    onEnsureDefaultData = { viewModel.ensureDefaultData() }
+                                )
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Step 2: Confirmation & Preview
+                val activeType = if (existingTransaction != null) transactionType else when (pagerState.currentPage) {
+                    0 -> TransactionType.EXPENSE
+                    1 -> TransactionType.INCOME
+                    else -> TransactionType.TRANSFER
+                }
+                val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
+                val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+                val amountVal = amountText.toDoubleOrNull() ?: 0.0
+                val feeVal = feeText.toDoubleOrNull() ?: 0.0
+                val exchangeRateVal = exchangeRateText.toDoubleOrNull() ?: 1.0
+
+                val resultingBalance = when (activeType) {
+                    TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
+                    TransactionType.INCOME -> currentBalance + amountVal
+                    TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
+                }
+
+                val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
+                val targetCurrentBalance = targetAccountWithBal?.balance
+                val resultingTargetBalance = if (targetCurrentBalance != null) {
+                    targetCurrentBalance + (amountVal * exchangeRateVal)
+                } else null
+
+                val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
+
+                Column(
+                    modifier = modifier
+                        .fillMaxSize()
+                        .padding(padding)
+                        .imePadding()
+                        .verticalScroll(rememberScrollState())
+                        .padding(horizontal = 16.dp, vertical = 12.dp)
+                ) {
+                    TransactionConfirmationView(
+                        transactionType = activeType,
+                        amount = amountVal,
+                        currencySymbol = currSymbol,
+                        isBn = isBn,
+                        accountName = selectedAccountWithBal?.account?.name,
+                        targetAccountName = targetAccountWithBal?.account?.name,
+                        category = selectedCategory,
+                        dateTimestamp = dateTimestamp,
+                        note = note.trim(),
+                        receiptUriStr = receiptUriStr,
+                        fee = feeVal,
+                        exchangeRate = exchangeRateVal,
+                        currentBalance = currentBalance,
+                        resultingBalance = resultingBalance,
+                        targetCurrentBalance = targetCurrentBalance,
+                        resultingTargetBalance = resultingTargetBalance,
+                        onBackClick = { currentStep = 1 },
+                        onConfirmSaveClick = { handleSave(activeType) }
+                    )
                 }
             }
         }
@@ -585,7 +698,7 @@ private fun TransactionFormFields(
     onPickReceipt: () -> Unit,
     onRemoveReceipt: () -> Unit,
     errorMessage: String?,
-    onSave: () -> Unit,
+    onNext: () -> Unit,
     onEnsureDefaultData: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -1039,39 +1152,8 @@ private fun TransactionFormFields(
             Spacer(modifier = Modifier.height(12.dp))
         }
 
-        val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
-        val currentBalance = selectedAccountWithBal?.balance ?: 0.0
-        val amountVal = amountText.toDoubleOrNull() ?: 0.0
-        val feeVal = feeText.toDoubleOrNull() ?: 0.0
-        val exchangeRateVal = exchangeRateText.toDoubleOrNull() ?: 1.0
-
-        val resultingBalance = when (type) {
-            TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
-            TransactionType.INCOME -> currentBalance + amountVal
-            TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
-        }
-
-        val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
-        val targetCurrentBalance = targetAccountWithBal?.balance
-        val resultingTargetBalance = if (targetCurrentBalance != null) {
-            targetCurrentBalance + (amountVal * exchangeRateVal)
-        } else null
-
-        TransactionBalancePreviewCard(
-            transactionType = type,
-            currentBalance = currentBalance,
-            resultingBalance = resultingBalance,
-            targetCurrentBalance = targetCurrentBalance,
-            resultingTargetBalance = resultingTargetBalance,
-            currencySymbol = currSymbol,
-            isBn = isBn,
-            accountName = selectedAccountWithBal?.account?.name,
-            targetAccountName = targetAccountWithBal?.account?.name,
-            amount = amountVal
-        )
-        Spacer(modifier = Modifier.height(12.dp))
-
         if (errorMessage != null) {
+            Spacer(modifier = Modifier.height(12.dp))
             Text(
                 text = errorMessage,
                 color = MaterialTheme.colorScheme.error,
@@ -1082,9 +1164,9 @@ private fun TransactionFormFields(
 
         Spacer(modifier = Modifier.height(16.dp))
 
-        // Save Button
+        // Next Step Button
         Button(
-            onClick = onSave,
+            onClick = onNext,
             modifier = Modifier
                 .fillMaxWidth()
                 .height(52.dp)
@@ -1099,14 +1181,14 @@ private fun TransactionFormFields(
                 contentColor = Color.White
             )
         ) {
-            Icon(Icons.Default.Check, contentDescription = null, tint = Color.White)
-            Spacer(modifier = Modifier.width(8.dp))
             Text(
-                text = Localization.getString(Localization.Key.SAVE, isBn),
+                text = Localization.getString(Localization.Key.NEXT_STEP, isBn),
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White
             )
+            Spacer(modifier = Modifier.width(8.dp))
+            Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = null, tint = Color.White)
         }
 
         Spacer(modifier = Modifier.height(48.dp))
