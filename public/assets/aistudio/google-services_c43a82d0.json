@@ -1,0 +1,63 @@
+{
+  "project_info": {
+    "project_number": "990037686252",
+    "project_id": "hisab-app-161ed",
+    "storage_bucket": "hisab-app-161ed.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:990037686252:android:182035038707d4d63c32c9",
+        "android_client_info": {
+          "package_name": "com.plusemon.hisab"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "990037686252-ogp41pomoqckvu3dqjeepa5nd8fbj3rp.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.plusemon.hisab",
+            "certificate_hash": "a27f46525c5e1c93894f07c317f983b338ce510e"
+          }
+        },
+        {
+          "client_id": "990037686252-pv9dnth5j3g7nqftnv9e1j966pge1etg.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.plusemon.hisab",
+            "certificate_hash": "71d4eddf3c4c36aca65922c5a9f974b5d2eee391"
+          }
+        },
+        {
+          "client_id": "990037686252-tu4k3rb1kufie8j56q1an17tevhbvfqu.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.plusemon.hisab",
+            "certificate_hash": "96517e5507333f1cf950fa78c159b76ace27a25d"
+          }
+        },
+        {
+          "client_id": "990037686252-4ma0sd2m5hmihe6802aqm4qo0vfpauue.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAdO9z6trn3BD_eyW7EK6rvqFiSVURcJmA"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "990037686252-4ma0sd2m5hmihe6802aqm4qo0vfpauue.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

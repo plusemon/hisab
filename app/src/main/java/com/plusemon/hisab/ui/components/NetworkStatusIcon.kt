@@ -11,7 +11,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Wifi
 import androidx.compose.material.icons.filled.WifiOff
 import androidx.compose.material3.Icon
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -23,7 +22,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 
 /**
- * Small status icon displayed in top app bars indicating network connectivity (online vs offline mode).
+ * Compact status icon displayed in detail top app bars indicating network connectivity (online vs offline mode).
  */
 @Composable
 fun NetworkStatusIcon(
@@ -47,24 +46,24 @@ fun NetworkStatusIcon(
 
     Surface(
         modifier = modifier
-            .size(38.dp)
-            .clip(RoundedCornerShape(14.dp))
+            .size(36.dp)
+            .clip(RoundedCornerShape(12.dp))
             .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
             .testTag("network_status_icon"),
-        shape = RoundedCornerShape(14.dp),
+        shape = RoundedCornerShape(12.dp),
         color = bgColor,
         border = BorderStroke(1.dp, tintColor.copy(alpha = 0.3f)),
         shadowElevation = 0.dp
     ) {
         Box(
-            modifier = Modifier.size(38.dp),
+            modifier = Modifier.size(36.dp),
             contentAlignment = Alignment.Center
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = contentDescription,
                 tint = tintColor,
-                modifier = Modifier.size(19.dp)
+                modifier = Modifier.size(18.dp)
             )
         }
     }

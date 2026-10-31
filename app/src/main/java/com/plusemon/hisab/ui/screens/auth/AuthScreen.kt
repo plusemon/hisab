@@ -259,7 +259,12 @@ fun AuthScreen(
             }
 
             val credentialManager = CredentialManager.create(context)
-            val webClientId = "990037686252-4ma0sd2m5hmihe6802aqm4qo0vfpauue.apps.googleusercontent.com"
+            val defaultWebClientIdResId = context.resources.getIdentifier("default_web_client_id", "string", context.packageName)
+            val dynamicWebClientId = if (defaultWebClientIdResId != 0) {
+                try { context.getString(defaultWebClientIdResId) } catch (_: Exception) { null }
+            } else null
+            val webClientId = dynamicWebClientId?.ifBlank { null }
+                ?: "990037686252-4ma0sd2m5hmihe6802aqm4qo0vfpauue.apps.googleusercontent.com"
 
             fun isCancellation(t: Throwable): Boolean {
                 var curr: Throwable? = t

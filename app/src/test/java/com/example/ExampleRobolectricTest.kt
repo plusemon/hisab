@@ -405,6 +405,39 @@ class ExampleRobolectricTest {
     // Secondary matching phone should be ordered first when searched by its digits
     assertEquals("01819-000111", bySecondaryDigits[0].primaryPhone?.rawNumber)
   }
+
+  @Test
+  fun `unified status pill resolves offline and cloud sync states accurately`() {
+    // 1. Online & Synced -> non-attention compact icon state
+    val syncedBn = com.plusemon.hisab.ui.components.resolveUnifiedStatusVisuals(
+      status = com.plusemon.hisab.data.model.AppSyncStatus.Synced(),
+      isNetworkConnected = true,
+      isBn = true
+    )
+    assertEquals(false, syncedBn.isAttentionState)
+    assertEquals(false, syncedBn.isLoading)
+    assertEquals("সিঙ্কড", syncedBn.shortLabel)
+
+    // 2. Online & Syncing -> attention state with concise short label
+    val syncingBn = com.plusemon.hisab.ui.components.resolveUnifiedStatusVisuals(
+      status = com.plusemon.hisab.data.model.AppSyncStatus.Syncing,
+      isNetworkConnected = true,
+      isBn = true
+    )
+    assertEquals(true, syncingBn.isAttentionState)
+    assertEquals(true, syncingBn.isLoading)
+    assertEquals("সিঙ্ক", syncingBn.shortLabel)
+
+    // 3. Offline overrides sync state -> attention state with Offline label
+    val offlineEn = com.plusemon.hisab.ui.components.resolveUnifiedStatusVisuals(
+      status = com.plusemon.hisab.data.model.AppSyncStatus.Synced(),
+      isNetworkConnected = false,
+      isBn = false
+    )
+    assertEquals(true, offlineEn.isAttentionState)
+    assertEquals(false, offlineEn.isLoading)
+    assertEquals("Offline", offlineEn.shortLabel)
+  }
 }
 
 

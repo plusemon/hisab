@@ -5,6 +5,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -47,12 +48,14 @@ import com.plusemon.hisab.data.model.UserSettings
 import com.plusemon.hisab.domain.util.Localization
 
 /**
- * Modern Dashboard Header displayed on the root tabs (Home/Dashboard).
+ * Mobile-Responsive Dashboard Header displayed on the root tabs (Home/Dashboard, Transactions, Budgets, Debts).
  * Features:
- * 1. Profile row: Avatar + Greeting & User Name with compact sync status.
- * 2. Header actions:
- *    - Language Switch button styled as uploaded pill design [ 文A EN / বাং ]
- *    - Theme Switcher with System Default (default), Light, and Dark modes.
+ * 1. Left Profile Cluster (weighted to prevent clipping):
+ *    - Avatar + Time-of-day Greeting & Display Name with clean single-line ellipsis handling.
+ * 2. Right Compact Action Cluster (36.dp height controls):
+ *    - Unified Connectivity & Cloud Sync Status Pill (combines network online/offline and sync state).
+ *    - Language Switch Pill [ 文A বাং / EN ].
+ *    - Theme Switcher Button with System Default, Light, and Dark modes.
  */
 @Composable
 fun DashboardHeader(
@@ -81,64 +84,72 @@ fun DashboardHeader(
     var showThemeMenu by remember { mutableStateOf(false) }
 
     Surface(
-        modifier = modifier.fillMaxWidth(),
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("dashboard_header"),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(0.5.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
         shadowElevation = 0.dp
     ) {
-        Column(
+        BoxWithConstraints(
             modifier = Modifier
                 .fillMaxWidth()
                 .statusBarsPadding()
-                .padding(horizontal = 14.dp, vertical = 6.dp)
         ) {
+            val isCompactWidth = maxWidth < 360.dp
+            val allowStatusLabel = maxWidth >= 360.dp
+            val horizontalPadding = if (isCompactWidth) 12.dp else 16.dp
+            val actionSpacing = if (isCompactWidth) 6.dp else 8.dp
+            val avatarSize = if (isCompactWidth) 36.dp else 38.dp
+
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = horizontalPadding, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                // Left side: User Avatar + Greeting & Name + Compact Sync Indicator
+                // Left side: User Avatar + Greeting & Display Name
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier
-                        .weight(1f, fill = false)
-                        .clip(RoundedCornerShape(10.dp))
+                        .weight(1f)
+                        .clip(RoundedCornerShape(12.dp))
                         .clickable { onProfileClick() }
                         .padding(vertical = 2.dp, horizontal = 2.dp)
+                        .testTag("header_profile_cluster")
                 ) {
                     UserAvatar(
                         photoUrl = user?.photoUrl,
                         displayName = user?.displayName,
-                        size = 38.dp,
-                        shape = RoundedCornerShape(10.dp),
+                        size = avatarSize,
+                        shape = RoundedCornerShape(11.dp),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.25f))
                     )
 
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(10.dp))
 
-                    Column {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Text(
-                                text = greeting,
-                                style = MaterialTheme.typography.labelSmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                softWrap = false
-                            )
-
-                            Spacer(modifier = Modifier.width(4.dp))
-
-                            RealTimeStatusBadge(
-                                status = syncStatus,
-                                isBn = isBn,
-                                onSyncClick = onSyncClick,
-                                compact = true
-                            )
-                        }
+                    Column(
+                        modifier = Modifier.weight(1f),
+                        verticalArrangement = Arrangement.Center
+                    ) {
+                        Text(
+                            text = greeting,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 11.5.sp,
+                                lineHeight = 14.sp
+                            ),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
 
                         Text(
                             text = user?.displayName ?: (if (isBn) "স্বাগতম" else "Welcome"),
-                            style = MaterialTheme.typography.titleMedium.copy(fontSize = 15.5.sp),
+                            style = MaterialTheme.typography.titleMedium.copy(
+                                fontSize = if (isCompactWidth) 14.5.sp else 15.5.sp,
+                                lineHeight = 19.sp
+                            ),
                             fontWeight = FontWeight.SemiBold,
                             color = MaterialTheme.colorScheme.onSurface,
                             maxLines = 1,
@@ -149,27 +160,38 @@ fun DashboardHeader(
 
                 Spacer(modifier = Modifier.width(8.dp))
 
-                // Right side: Action Controls (Network Status, Language Pill, Theme Switcher)
+                // Right side: Unified Status Pill, Language Switch Pill, Theme Switcher Button
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.spacedBy(actionSpacing)
                 ) {
-                    NetworkStatusIcon(isConnected = isNetworkConnected)
+                    // 1. Unified Network + Cloud Sync Status Pill
+                    RealTimeStatusBadge(
+                        status = syncStatus,
+                        isBn = isBn,
+                        onSyncClick = onSyncClick,
+                        compact = true,
+                        isNetworkConnected = isNetworkConnected,
+                        allowCompactLabel = allowStatusLabel
+                    )
 
-                    // Language Switch Button (Pill Design matching uploaded screenshot: [ 文A EN / বাং ])
+                    // 2. Language Switch Button (Compact Pill: [ 文A বাং / EN ])
                     Surface(
                         modifier = Modifier
-                            .height(38.dp)
-                            .clip(RoundedCornerShape(16.dp))
+                            .height(36.dp)
+                            .clip(RoundedCornerShape(12.dp))
                             .clickable { onToggleLanguage() }
                             .testTag("header_language_btn"),
-                        shape = RoundedCornerShape(16.dp),
-                        color = MaterialTheme.colorScheme.surface,
-                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                         shadowElevation = 0.dp
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 11.dp, vertical = 6.dp),
+                            modifier = Modifier.padding(
+                                horizontal = if (isCompactWidth) 8.dp else 10.dp,
+                                vertical = 6.dp
+                            ),
                             verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.Center
                         ) {
@@ -177,21 +199,22 @@ fun DashboardHeader(
                                 imageVector = Icons.Default.Translate,
                                 contentDescription = Localization.getString(Localization.Key.LANGUAGE, isBn),
                                 tint = MaterialTheme.colorScheme.onSurface,
-                                modifier = Modifier.size(17.dp)
+                                modifier = Modifier.size(15.dp)
                             )
-                            Spacer(modifier = Modifier.width(5.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
                             Text(
                                 text = if (isBn) "বাং" else "EN",
                                 style = MaterialTheme.typography.labelMedium.copy(
-                                    fontSize = 13.5.sp,
+                                    fontSize = 12.5.sp,
                                     fontWeight = FontWeight.Bold
                                 ),
-                                color = MaterialTheme.colorScheme.onSurface
+                                color = MaterialTheme.colorScheme.onSurface,
+                                maxLines = 1
                             )
                         }
                     }
 
-                    // Theme Switcher Button with System Default, Light & Dark options
+                    // 3. Theme Switcher Button with System Default, Light & Dark options
                     Box {
                         val currentThemeIcon = when {
                             settings.useSystemTheme -> Icons.Default.BrightnessAuto
@@ -201,13 +224,13 @@ fun DashboardHeader(
 
                         Surface(
                             modifier = Modifier
-                                .size(38.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(12.dp))
                                 .clickable { showThemeMenu = true }
                                 .testTag("header_theme_btn"),
-                            shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surface,
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)),
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
                             shadowElevation = 0.dp
                         ) {
                             Box(
@@ -215,10 +238,10 @@ fun DashboardHeader(
                                 contentAlignment = Alignment.Center
                             ) {
                                 Icon(
-                                    imageVector = currentThemeIcon,
+                                                                        imageVector = currentThemeIcon,
                                     contentDescription = Localization.getString(Localization.Key.THEME, isBn),
                                     tint = MaterialTheme.colorScheme.onSurface,
-                                    modifier = Modifier.size(19.dp)
+                                    modifier = Modifier.size(18.dp)
                                 )
                             }
                         }
