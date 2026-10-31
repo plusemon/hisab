@@ -4,6 +4,8 @@ import android.content.Context
 import android.util.Log
 import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
+import com.google.firebase.auth.FirebaseAuth
+import com.google.firebase.firestore.DocumentSnapshot
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.plusemon.hisab.data.local.AppDatabase
@@ -21,6 +23,7 @@ import com.plusemon.hisab.data.model.ShopCreditPayment
 import com.plusemon.hisab.data.model.ShopCreditPurchase
 import com.plusemon.hisab.data.model.TransactionRecord
 import com.plusemon.hisab.data.model.TransactionType
+import com.plusemon.hisab.data.model.User
 import com.plusemon.hisab.data.model.UserAccount
 import com.plusemon.hisab.data.model.UserSettings
 import com.plusemon.hisab.data.model.Vendor
@@ -111,6 +114,7 @@ class FirestoreRepositoryImpl(
     private val db: AppDatabase
 ) : FirestoreRepository {
 
+    private val userDao = db.userDao()
     private val transactionDao = db.transactionDao()
     private val accountDao = db.accountDao()
     private val categoryDao = db.categoryDao()
@@ -138,7 +142,7 @@ class FirestoreRepositoryImpl(
         }
     }
 
-    private suspend fun <T> Task<T>.awaitTask(timeoutMs: Long = 6000L): T = withContext(Dispatchers.IO) {
+    private suspend fun <T> Task<T>.awaitTask(timeoutMs: Long = 10000L): T = withContext(Dispatchers.IO) {
         kotlinx.coroutines.withTimeout(timeoutMs) {
             suspendCancellableCoroutine { continuation ->
                 addOnSuccessListener { result ->
@@ -149,6 +153,260 @@ class FirestoreRepositoryImpl(
                 }
                 addOnCanceledListener {
                     continuation.cancel()
+                }
+            }
+        }
+    }
+
+    private fun DocumentSnapshot.safeLong(field: String): Long? {
+        return try {
+            when (val raw = get(field)) {
+                is Number -> raw.toLong()
+                is String -> raw.toLongOrNull() ?: raw.toDoubleOrNull()?.toLong()
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun DocumentSnapshot.safeDouble(field: String): Double? {
+        return try {
+            when (val raw = get(field)) {
+                is Number -> raw.toDouble()
+                is String -> raw.toDoubleOrNull()
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun DocumentSnapshot.safeBoolean(field: String): Boolean? {
+        return try {
+            when (val raw = get(field)) {
+                is Boolean -> raw
+                is String -> raw.toBooleanStrictOrNull()
+                is Number -> raw.toInt() != 0
+                else -> null
+            }
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private fun DocumentSnapshot.safeString(field: String): String? {
+        return try {
+            get(field)?.toString()
+        } catch (e: Exception) {
+            null
+        }
+    }
+
+    private suspend fun resolveCandidateUserIds(userId: String, firestore: FirebaseFirestore): List<String> {
+        val candidates = linkedSetOf<String>()
+        if (userId.isNotBlank()) candidates.add(userId)
+
+        val authPrefs = context.getSharedPreferences("hisab_auth_prefs", Context.MODE_PRIVATE)
+        val prefUid = authPrefs.getString("current_user_id", null)
+        val prefEmail = authPrefs.getString("current_user_email", null)
+        if (!prefUid.isNullOrBlank()) candidates.add(prefUid)
+
+        val localUser = try { userDao.getUserDirect(userId) } catch (e: Exception) { null }
+        val emailSet = linkedSetOf<String>()
+        localUser?.email?.takeIf { it.isNotBlank() }?.let {
+            emailSet.add(it)
+            emailSet.add(it.lowercase())
+        }
+        prefEmail?.takeIf { it.isNotBlank() }?.let {
+            emailSet.add(it)
+            emailSet.add(it.lowercase())
+        }
+
+        try {
+            if (FirebaseApp.getApps(context).isNotEmpty()) {
+                val fbUser = FirebaseAuth.getInstance().currentUser
+                fbUser?.uid?.takeIf { it.isNotBlank() }?.let { candidates.add(it) }
+                fbUser?.email?.takeIf { it.isNotBlank() }?.let {
+                    emailSet.add(it)
+                    emailSet.add(it.lowercase())
+                }
+            }
+        } catch (e: Exception) {
+            // Ignore
+        }
+
+        for (email in emailSet) {
+            candidates.add(email)
+            try {
+                val snap = firestore.collection(COLLECTION_USERS)
+                    .whereEqualTo("email", email)
+                    .get()
+                    .awaitTask(5000L)
+                for (doc in snap.documents) {
+                    if (doc.id.isNotBlank()) candidates.add(doc.id)
+                    doc.safeString("uid")?.takeIf { it.isNotBlank() }?.let { candidates.add(it) }
+                }
+            } catch (e: Exception) {
+                // Ignore if security rules restrict collection query
+            }
+        }
+
+        return candidates.filter { it.isNotBlank() }
+    }
+
+    private suspend fun ensureLocalUserAndForeignKeys(
+        userId: String,
+        requiredAccountIds: Set<Long> = emptySet(),
+        requiredVendorIds: Set<Long> = emptySet()
+    ) {
+        // 1. Ensure User exists in Room so ForeignKey(User::class) never fails
+        if (userDao.getUserDirect(userId) == null) {
+            val authPrefs = context.getSharedPreferences("hisab_auth_prefs", Context.MODE_PRIVATE)
+            val email = authPrefs.getString("current_user_email", null) ?: "$userId@hisab.local"
+            val name = authPrefs.getString("current_user_name", null) ?: "User"
+            val photo = authPrefs.getString("current_user_photo", null)
+            val isGoogle = authPrefs.getBoolean("current_user_is_google", true)
+            userDao.insertUser(
+                User(
+                    id = userId,
+                    email = email,
+                    displayName = name,
+                    photoUrl = photo,
+                    isGoogleUser = isGoogle
+                )
+            )
+        }
+
+        // 2. Ensure all referenced Account IDs exist in Room so ForeignKey(UserAccount::class) never fails
+        val existingAccounts = accountDao.getAllAccountsList(userId)
+        val existingAccountIds = existingAccounts.map { it.id }.toMutableSet()
+
+        val targetAccountIds = requiredAccountIds.toMutableSet()
+        if (existingAccountIds.isEmpty() && targetAccountIds.isEmpty()) {
+            targetAccountIds.addAll(listOf(1L, 2L, 3L, 4L))
+        }
+
+        val missingAccounts = mutableListOf<UserAccount>()
+        for (accId in targetAccountIds) {
+            if (accId > 0L && !existingAccountIds.contains(accId)) {
+                val template = when (accId) {
+                    1L -> UserAccount(
+                        id = 1L,
+                        userId = userId,
+                        name = "Cash",
+                        type = AccountType.CASH,
+                        currencyCode = "BDT",
+                        startingBalance = 0.0,
+                        colorHex = "#0F766E",
+                        iconName = "payments"
+                    )
+                    2L -> UserAccount(
+                        id = 2L,
+                        userId = userId,
+                        name = "bKash",
+                        type = AccountType.MOBILE_WALLET,
+                        currencyCode = "BDT",
+                        startingBalance = 0.0,
+                        colorHex = "#E11475",
+                        iconName = "account_balance_wallet"
+                    )
+                    3L -> UserAccount(
+                        id = 3L,
+                        userId = userId,
+                        name = "Nagad",
+                        type = AccountType.MOBILE_WALLET,
+                        currencyCode = "BDT",
+                        startingBalance = 0.0,
+                        colorHex = "#F97316",
+                        iconName = "account_balance_wallet"
+                    )
+                    4L -> UserAccount(
+                        id = 4L,
+                        userId = userId,
+                        name = "Bank Account",
+                        type = AccountType.BANK,
+                        currencyCode = "BDT",
+                        startingBalance = 0.0,
+                        colorHex = "#2563EB",
+                        iconName = "account_balance"
+                    )
+                    else -> UserAccount(
+                        id = accId,
+                        userId = userId,
+                        name = "Account #$accId",
+                        type = AccountType.CASH,
+                        currencyCode = "BDT",
+                        startingBalance = 0.0,
+                        colorHex = "#0F766E",
+                        iconName = "account_balance_wallet"
+                    )
+                }
+                missingAccounts.add(template)
+                existingAccountIds.add(accId)
+            }
+        }
+        if (missingAccounts.isNotEmpty()) {
+            for (acc in missingAccounts) {
+                try {
+                    accountDao.insertAccount(acc)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Fallback insertAccount ${acc.id} failed: ${e.message}")
+                }
+            }
+        }
+
+        // 3. Ensure all referenced Vendor IDs exist in Room so ForeignKey(Vendor::class) never fails
+        if (requiredVendorIds.isNotEmpty()) {
+            val existingVendorIds = vendorDao.getAllVendorsList(userId).map { it.id }.toMutableSet()
+            for (vId in requiredVendorIds) {
+                if (vId > 0L && !existingVendorIds.contains(vId)) {
+                    try {
+                        vendorDao.insertVendor(
+                            Vendor(
+                                id = vId,
+                                userId = userId,
+                                name = "Shop #$vId"
+                            )
+                        )
+                        existingVendorIds.add(vId)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Fallback insertVendor $vId failed: ${e.message}")
+                    }
+                }
+            }
+        }
+    }
+
+    private suspend fun ensureDefaultCategoriesIfEmpty(userId: String) {
+        if (categoryDao.getCategoryCount(userId) == 0) {
+            val defaultCategories = listOf(
+                Category(userId = userId, nameBn = "খাবার", nameEn = "Food & Dining", type = TransactionType.EXPENSE, iconName = "restaurant", colorHex = "#F97316", isDefault = true),
+                Category(userId = userId, nameBn = "বাজার ও মুদি", nameEn = "Groceries", type = TransactionType.EXPENSE, iconName = "shopping_cart", colorHex = "#10B981", isDefault = true),
+                Category(userId = userId, nameBn = "যাতায়াত", nameEn = "Transport", type = TransactionType.EXPENSE, iconName = "directions_bus", colorHex = "#2563EB", isDefault = true),
+                Category(userId = userId, nameBn = "বিল ও ইউটিলিটি", nameEn = "Bills & Utilities", type = TransactionType.EXPENSE, iconName = "receipt_long", colorHex = "#EF4444", isDefault = true),
+                Category(userId = userId, nameBn = "কেনাকাটা", nameEn = "Shopping", type = TransactionType.EXPENSE, iconName = "shopping_bag", colorHex = "#EC4899", isDefault = true),
+                Category(userId = userId, nameBn = "চিকিৎসা ও স্বাস্থ্য", nameEn = "Healthcare", type = TransactionType.EXPENSE, iconName = "medical_services", colorHex = "#0D9488", isDefault = true),
+                Category(userId = userId, nameBn = "বিনোদন ও ভ্রমণ", nameEn = "Entertainment", type = TransactionType.EXPENSE, iconName = "movie", colorHex = "#7C3AED", isDefault = true),
+                Category(userId = userId, nameBn = "শিক্ষা", nameEn = "Education", type = TransactionType.EXPENSE, iconName = "school", colorHex = "#F59E0B", isDefault = true),
+                Category(userId = userId, nameBn = "অন্যান্য খরচ", nameEn = "Other Expense", type = TransactionType.EXPENSE, iconName = "category", colorHex = "#64748B", isDefault = true),
+                Category(userId = userId, nameBn = "দোকান বাকি পরিশোধ", nameEn = "Shop Credit Payment", type = TransactionType.EXPENSE, iconName = "store", colorHex = "#EF4444", isDefault = true),
+                Category(userId = userId, nameBn = "ধার প্রদান", nameEn = "Loan Given", type = TransactionType.EXPENSE, iconName = "payments", colorHex = "#EF4444", isDefault = true),
+                Category(userId = userId, nameBn = "ধার পরিশোধ", nameEn = "Loan Repayment", type = TransactionType.EXPENSE, iconName = "payment", colorHex = "#F97316", isDefault = true),
+                Category(userId = userId, nameBn = "বেতন", nameEn = "Salary", type = TransactionType.INCOME, iconName = "payments", colorHex = "#10B981", isDefault = true),
+                Category(userId = userId, nameBn = "ব্যবসা", nameEn = "Business", type = TransactionType.INCOME, iconName = "store", colorHex = "#2563EB", isDefault = true),
+                Category(userId = userId, nameBn = "ফ্রিল্যান্সিং", nameEn = "Freelancing", type = TransactionType.INCOME, iconName = "laptop", colorHex = "#7C3AED", isDefault = true),
+                Category(userId = userId, nameBn = "বিনিয়োগ ও লভ্যাংশ", nameEn = "Investments", type = TransactionType.INCOME, iconName = "trending_up", colorHex = "#F59E0B", isDefault = true),
+                Category(userId = userId, nameBn = "উপহার ও অনুদান", nameEn = "Gifts & Grants", type = TransactionType.INCOME, iconName = "card_giftcard", colorHex = "#EC4899", isDefault = true),
+                Category(userId = userId, nameBn = "অন্যান্য আয়", nameEn = "Other Income", type = TransactionType.INCOME, iconName = "attach_money", colorHex = "#0D9488", isDefault = true),
+                Category(userId = userId, nameBn = "ধার গ্রহণ", nameEn = "Loan Received", type = TransactionType.INCOME, iconName = "account_balance_wallet", colorHex = "#10B981", isDefault = true),
+                Category(userId = userId, nameBn = "ধার ফেরত গ্রহণ", nameEn = "Loan Collection", type = TransactionType.INCOME, iconName = "savings", colorHex = "#0D9488", isDefault = true)
+            )
+            try {
+                categoryDao.insertCategories(defaultCategories)
+            } catch (e: Exception) {
+                for (cat in defaultCategories) {
+                    try { categoryDao.insertCategory(cat) } catch (_: Exception) {}
                 }
             }
         }
@@ -889,19 +1147,73 @@ class FirestoreRepositoryImpl(
             IllegalStateException("Firebase is not initialized")
         )
         try {
-            val userDocRef = firestore.collection(COLLECTION_USERS).document(userId)
+            val candidateIds = resolveCandidateUserIds(userId, firestore)
+            var anyQuerySucceeded = false
+            var lastError: Exception? = null
 
-            val accountsSnap = userDocRef.collection(COLLECTION_ACCOUNTS).limit(1).get().awaitTask(4000L)
-            if (!accountsSnap.isEmpty) return@withContext Result.success(true)
+            for (candId in candidateIds) {
+                val userDocRef = firestore.collection(COLLECTION_USERS).document(candId)
 
-            val txSnap = userDocRef.collection(COLLECTION_TRANSACTIONS).limit(1).get().awaitTask(4000L)
-            if (!txSnap.isEmpty) return@withContext Result.success(true)
+                try {
+                    val txSnap = userDocRef.collection(COLLECTION_TRANSACTIONS).limit(1).get().awaitTask(8000L)
+                    anyQuerySucceeded = true
+                    if (!txSnap.isEmpty) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
 
-            val catSnap = userDocRef.collection(COLLECTION_CATEGORIES).limit(1).get().awaitTask(4000L)
-            if (!catSnap.isEmpty) return@withContext Result.success(true)
+                try {
+                    val accountsSnap = userDocRef.collection(COLLECTION_ACCOUNTS).limit(1).get().awaitTask(8000L)
+                    anyQuerySucceeded = true
+                    if (!accountsSnap.isEmpty) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
 
-            val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(3000L)
-            if (settingsDoc.exists()) return@withContext Result.success(true)
+                try {
+                    val debtSnap = userDocRef.collection(COLLECTION_LOANS_DEBTS).limit(1).get().awaitTask(6000L)
+                    anyQuerySucceeded = true
+                    if (!debtSnap.isEmpty) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
+
+                try {
+                    val vendorSnap = userDocRef.collection(COLLECTION_VENDORS).limit(1).get().awaitTask(6000L)
+                    anyQuerySucceeded = true
+                    if (!vendorSnap.isEmpty) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
+
+                try {
+                    val purchaseSnap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PURCHASES).limit(1).get().awaitTask(6000L)
+                    anyQuerySucceeded = true
+                    if (!purchaseSnap.isEmpty) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
+
+                try {
+                    val catSnap = userDocRef.collection(COLLECTION_CATEGORIES).limit(1).get().awaitTask(6000L)
+                    anyQuerySucceeded = true
+                    if (!catSnap.isEmpty) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
+
+                try {
+                    val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(5000L)
+                    anyQuerySucceeded = true
+                    if (settingsDoc.exists()) return@withContext Result.success(true)
+                } catch (e: Exception) {
+                    lastError = e
+                }
+            }
+
+            if (!anyQuerySucceeded && lastError != null) {
+                return@withContext Result.failure(lastError)
+            }
 
             Result.success(false)
         } catch (e: Exception) {
@@ -919,496 +1231,720 @@ class FirestoreRepositoryImpl(
         )
         try {
             onProgress?.invoke("Connecting to cloud backup...", 0.08f)
-            val userDocRef = firestore.collection(COLLECTION_USERS).document(userId)
+            ensureLocalUserAndForeignKeys(userId)
 
-            val remoteAccountsSnap = userDocRef.collection(COLLECTION_ACCOUNTS).get().awaitTask(6000L)
-            val remoteTransactionsSnap = userDocRef.collection(COLLECTION_TRANSACTIONS).limit(5).get().awaitTask(6000L)
-            val remoteCategoriesSnap = userDocRef.collection(COLLECTION_CATEGORIES).get().awaitTask(6000L)
+            val candidateIds = resolveCandidateUserIds(userId, firestore)
+            Log.i(TAG, "Checking cloud data across candidate IDs for $userId: $candidateIds")
 
-            val hasCloudData = !remoteAccountsSnap.isEmpty || !remoteTransactionsSnap.isEmpty || !remoteCategoriesSnap.isEmpty
+            val accountsMap = linkedMapOf<Long, UserAccount>()
+            val categoriesMap = linkedMapOf<Long, Category>()
+            val transactionsMap = linkedMapOf<Long, TransactionRecord>()
+            val budgetsMap = linkedMapOf<Long, Budget>()
+            val goalsMap = linkedMapOf<Long, SavingsGoal>()
+            val contactsMap = linkedMapOf<Long, Contact>()
+            val debtsMap = linkedMapOf<Long, LoanDebt>()
+            val repaymentsMap = linkedMapOf<Long, LoanRepayment>()
+            val vendorsMap = linkedMapOf<Long, Vendor>()
+            val purchasesMap = linkedMapOf<Long, ShopCreditPurchase>()
+            val paymentsMap = linkedMapOf<Long, ShopCreditPayment>()
+            val rulesMap = linkedMapOf<Long, RecurringRule>()
+            var restoredSettingsObj: UserSettings? = null
+            var anyNetworkCallSucceeded = false
+            var lastNetworkException: Exception? = null
 
-            if (!hasCloudData) {
-                val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(4000L)
-                if (!settingsDoc.exists()) {
-                    Log.i(TAG, "No cloud data found for user $userId (new user)")
-                    return@withContext Result.success(CloudRestoreSummary(hasCloudData = false))
-                }
-            }
-
-            Log.i(TAG, "Restoring cloud data for user $userId...")
             onProgress?.invoke("Restoring accounts and balances...", 0.18f)
 
-            // 1. Restore Accounts
-            val remoteAccounts = remoteAccountsSnap.documents.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val name = doc.getString("name") ?: "Account"
-                val typeStr = doc.getString("type") ?: AccountType.CASH.name
-                val type = try { AccountType.valueOf(typeStr) } catch (e: Exception) { AccountType.CASH }
-                val currencyCode = doc.getString("currencyCode") ?: "BDT"
-                val startingBalance = doc.getDouble("startingBalance") ?: 0.0
-                val colorHex = doc.getString("colorHex") ?: "#0F766E"
-                val iconName = doc.getString("iconName") ?: "payments"
-                val isArchived = doc.getBoolean("isArchived") ?: false
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+            for (candId in candidateIds) {
+                val userDocRef = firestore.collection(COLLECTION_USERS).document(candId)
 
-                UserAccount(
-                    id = id,
-                    userId = userId,
-                    name = name,
-                    type = type,
-                    currencyCode = currencyCode,
-                    startingBalance = startingBalance,
-                    colorHex = colorHex,
-                    iconName = iconName,
-                    isArchived = isArchived,
-                    createdAt = createdAt
-                )
+                // 1. Fetch Accounts from candidate
+                try {
+                    val snap = userDocRef.collection(COLLECTION_ACCOUNTS).get().awaitTask(10000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: "Account"
+                        val typeStr = doc.safeString("type") ?: AccountType.CASH.name
+                        val type = try { AccountType.valueOf(typeStr) } catch (e: Exception) { AccountType.CASH }
+                        val currencyCode = doc.safeString("currencyCode") ?: "BDT"
+                        val startingBalance = doc.safeDouble("startingBalance") ?: 0.0
+                        val colorHex = doc.safeString("colorHex") ?: "#0F766E"
+                        val iconName = doc.safeString("iconName") ?: "payments"
+                        val isArchived = doc.safeBoolean("isArchived") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+
+                        val incoming = UserAccount(
+                            id = id,
+                            userId = userId,
+                            name = name,
+                            type = type,
+                            currencyCode = currencyCode,
+                            startingBalance = startingBalance,
+                            colorHex = colorHex,
+                            iconName = iconName,
+                            isArchived = isArchived,
+                            createdAt = createdAt
+                        )
+                        val existing = accountsMap[id]
+                        // Prefer account entry with non-zero startingBalance if one candidate had 0-balance defaults
+                        if (existing == null || (existing.startingBalance == 0.0 && incoming.startingBalance != 0.0)) {
+                            accountsMap[id] = incoming
+                        }
+                    }
+                } catch (e: Exception) {
+                    lastNetworkException = e
+                    Log.w(TAG, "Accounts fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 2. Fetch Categories from candidate
+                try {
+                    val snap = userDocRef.collection(COLLECTION_CATEGORIES).get().awaitTask(10000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val nameBn = doc.safeString("nameBn") ?: ""
+                        val nameEn = doc.safeString("nameEn") ?: ""
+                        val typeStr = doc.safeString("type") ?: TransactionType.EXPENSE.name
+                        val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
+                        val iconName = doc.safeString("iconName") ?: "category"
+                        val colorHex = doc.safeString("colorHex") ?: "#64748B"
+                        val isDefault = doc.safeBoolean("isDefault") ?: false
+                        val isArchived = doc.safeBoolean("isArchived") ?: false
+
+                        if (!categoriesMap.containsKey(id)) {
+                            categoriesMap[id] = Category(
+                                id = id,
+                                userId = userId,
+                                nameBn = nameBn,
+                                nameEn = nameEn,
+                                type = type,
+                                iconName = iconName,
+                                colorHex = colorHex,
+                                isDefault = isDefault,
+                                isArchived = isArchived
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    lastNetworkException = e
+                    Log.w(TAG, "Categories fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 3. Fetch Transactions from candidate
+                try {
+                    val snap = userDocRef.collection(COLLECTION_TRANSACTIONS).get().awaitTask(12000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val typeStr = doc.safeString("type") ?: TransactionType.EXPENSE.name
+                        val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val note = doc.safeString("note") ?: ""
+                        val fee = doc.safeDouble("fee") ?: 0.0
+                        val categoryId = doc.safeLong("categoryId")
+                        val toAccountId = doc.safeLong("toAccountId")
+                        val receiptUri = doc.safeString("receiptUri")
+                        val exchangeRate = doc.safeDouble("exchangeRate") ?: 1.0
+                        val isRecurringInstance = doc.safeBoolean("isRecurringInstance") ?: false
+                        val recurringRuleId = doc.safeLong("recurringRuleId")
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+
+                        if (!transactionsMap.containsKey(id)) {
+                            transactionsMap[id] = TransactionRecord(
+                                id = id,
+                                userId = userId,
+                                accountId = accountId,
+                                categoryId = categoryId,
+                                toAccountId = toAccountId,
+                                amount = amount,
+                                fee = fee,
+                                type = type,
+                                dateTimestamp = dateTimestamp,
+                                note = note,
+                                receiptUri = receiptUri,
+                                exchangeRate = exchangeRate,
+                                isRecurringInstance = isRecurringInstance,
+                                recurringRuleId = recurringRuleId,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    lastNetworkException = e
+                    Log.w(TAG, "Transactions fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 4. Fetch Budgets
+                try {
+                    val snap = userDocRef.collection(COLLECTION_BUDGETS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val categoryId = doc.safeLong("categoryId")
+                        val monthYear = doc.safeString("monthYear") ?: continue
+                        val limitAmount = doc.safeDouble("limitAmount") ?: 0.0
+                        if (!budgetsMap.containsKey(id)) {
+                            budgetsMap[id] = Budget(
+                                id = id,
+                                userId = userId,
+                                categoryId = categoryId,
+                                monthYear = monthYear,
+                                limitAmount = limitAmount
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Budgets fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 5. Fetch Savings Goals
+                try {
+                    val snap = userDocRef.collection(COLLECTION_SAVINGS_GOALS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: ""
+                        val targetAmount = doc.safeDouble("targetAmount") ?: 0.0
+                        val currentSavedAmount = doc.safeDouble("currentSavedAmount") ?: 0.0
+                        val targetDate = doc.safeLong("targetDate")
+                        val note = doc.safeString("note") ?: ""
+                        val colorHex = doc.safeString("colorHex") ?: "#0D9488"
+                        val iconName = doc.safeString("iconName") ?: "savings"
+                        val isCompleted = doc.safeBoolean("isCompleted") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        if (!goalsMap.containsKey(id)) {
+                            goalsMap[id] = SavingsGoal(
+                                id = id,
+                                userId = userId,
+                                name = name,
+                                targetAmount = targetAmount,
+                                currentSavedAmount = currentSavedAmount,
+                                targetDate = targetDate,
+                                note = note,
+                                colorHex = colorHex,
+                                iconName = iconName,
+                                isCompleted = isCompleted,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Goals fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 6. Fetch Contacts
+                try {
+                    val snap = userDocRef.collection(COLLECTION_CONTACTS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: ""
+                        val phone = doc.safeString("phone") ?: ""
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        if (!contactsMap.containsKey(id)) {
+                            contactsMap[id] = Contact(
+                                id = id,
+                                userId = userId,
+                                name = name,
+                                phone = phone,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Contacts fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 7. Fetch Loans & Debts
+                try {
+                    val snap = userDocRef.collection(COLLECTION_LOANS_DEBTS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val contactId = doc.safeLong("contactId") ?: 0L
+                        val personName = doc.safeString("personName") ?: ""
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val paidAmount = doc.safeDouble("paidAmount") ?: 0.0
+                        val typeStr = doc.safeString("type") ?: DebtType.OWED_TO_ME.name
+                        val type = try { DebtType.valueOf(typeStr) } catch (e: Exception) { DebtType.OWED_TO_ME }
+                        val dueDate = doc.safeLong("dueDate")
+                        val note = doc.safeString("note") ?: ""
+                        val phone = doc.safeString("phone") ?: ""
+                        val isSettled = doc.safeBoolean("isSettled") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        val transactionId = doc.safeLong("transactionId")
+                        if (!debtsMap.containsKey(id)) {
+                            debtsMap[id] = LoanDebt(
+                                id = id,
+                                userId = userId,
+                                contactId = contactId,
+                                personName = personName,
+                                accountId = accountId,
+                                amount = amount,
+                                paidAmount = paidAmount,
+                                type = type,
+                                dueDate = dueDate,
+                                note = note,
+                                phone = phone,
+                                isSettled = isSettled,
+                                createdAt = createdAt,
+                                transactionId = transactionId
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Debts fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 8. Fetch Loan Repayments
+                try {
+                    val snap = userDocRef.collection(COLLECTION_LOAN_REPAYMENTS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val loanId = doc.safeLong("loanId") ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val note = doc.safeString("note") ?: ""
+                        val transactionId = doc.safeLong("transactionId")
+                        if (!repaymentsMap.containsKey(id)) {
+                            repaymentsMap[id] = LoanRepayment(
+                                id = id,
+                                userId = userId,
+                                loanId = loanId,
+                                accountId = accountId,
+                                amount = amount,
+                                dateTimestamp = dateTimestamp,
+                                note = note,
+                                transactionId = transactionId
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Repayments fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 9. Fetch Vendors
+                try {
+                    val snap = userDocRef.collection(COLLECTION_VENDORS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: ""
+                        val phone = doc.safeString("phone") ?: ""
+                        val locationNote = doc.safeString("locationNote") ?: ""
+                        val categoryTag = doc.safeString("categoryTag") ?: ""
+                        val isArchived = doc.safeBoolean("isArchived") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        if (!vendorsMap.containsKey(id)) {
+                            vendorsMap[id] = Vendor(
+                                id = id,
+                                userId = userId,
+                                name = name,
+                                phone = phone,
+                                locationNote = locationNote,
+                                categoryTag = categoryTag,
+                                isArchived = isArchived,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Vendors fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 10. Fetch Shop Credit Purchases
+                try {
+                    val snap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PURCHASES).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val vendorId = doc.safeLong("vendorId") ?: continue
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val paidAmount = doc.safeDouble("paidAmount") ?: 0.0
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val dueDate = doc.safeLong("dueDate")
+                        val note = doc.safeString("note") ?: ""
+                        val isSettled = doc.safeBoolean("isSettled") ?: false
+                        if (!purchasesMap.containsKey(id)) {
+                            purchasesMap[id] = ShopCreditPurchase(
+                                id = id,
+                                userId = userId,
+                                vendorId = vendorId,
+                                amount = amount,
+                                paidAmount = paidAmount,
+                                dateTimestamp = dateTimestamp,
+                                dueDate = dueDate,
+                                note = note,
+                                isSettled = isSettled
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Shop purchases fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 11. Fetch Shop Credit Payments
+                try {
+                    val snap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PAYMENTS).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val vendorId = doc.safeLong("vendorId") ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val note = doc.safeString("note") ?: ""
+                        val transactionId = doc.safeLong("transactionId")
+                        if (!paymentsMap.containsKey(id)) {
+                            paymentsMap[id] = ShopCreditPayment(
+                                id = id,
+                                userId = userId,
+                                vendorId = vendorId,
+                                accountId = accountId,
+                                amount = amount,
+                                dateTimestamp = dateTimestamp,
+                                note = note,
+                                transactionId = transactionId
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Shop payments fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 12. Fetch Recurring Rules
+                try {
+                    val snap = userDocRef.collection(COLLECTION_RECURRING_RULES).get().awaitTask(8000L)
+                    anyNetworkCallSucceeded = true
+                    for (doc in snap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val categoryId = doc.safeLong("categoryId")
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val typeStr = doc.safeString("type") ?: TransactionType.EXPENSE.name
+                        val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
+                        val freqStr = doc.safeString("frequency") ?: Frequency.MONTHLY.name
+                        val frequency = try { Frequency.valueOf(freqStr) } catch (e: Exception) { Frequency.MONTHLY }
+                        val startDate = doc.safeLong("startDate") ?: System.currentTimeMillis()
+                        val endDate = doc.safeLong("endDate")
+                        val lastGeneratedDate = doc.safeLong("lastGeneratedDate") ?: 0L
+                        val isPaused = doc.safeBoolean("isPaused") ?: false
+                        val note = doc.safeString("note") ?: ""
+                        if (!rulesMap.containsKey(id)) {
+                            rulesMap[id] = RecurringRule(
+                                id = id,
+                                userId = userId,
+                                accountId = accountId,
+                                categoryId = categoryId,
+                                amount = amount,
+                                type = type,
+                                frequency = frequency,
+                                startDate = startDate,
+                                endDate = endDate,
+                                lastGeneratedDate = lastGeneratedDate,
+                                isPaused = isPaused,
+                                note = note
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.w(TAG, "Recurring rules fetch for candidate $candId failed: ${e.message}")
+                }
+
+                // 13. Fetch Settings
+                if (restoredSettingsObj == null) {
+                    try {
+                        val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(6000L)
+                        anyNetworkCallSucceeded = true
+                        if (settingsDoc.exists()) {
+                            val lang = settingsDoc.safeString("language") ?: "bn"
+                            val numeral = settingsDoc.safeString("numeralSystem") ?: "bn"
+                            val currency = settingsDoc.safeString("defaultCurrency") ?: "BDT"
+                            val symbol = settingsDoc.safeString("currencySymbol") ?: "৳"
+                            val hideBal = settingsDoc.safeBoolean("hideBalances") ?: false
+                            val pinEn = settingsDoc.safeBoolean("pinEnabled") ?: false
+                            val pin = settingsDoc.safeString("pinCode") ?: ""
+                            val dailyReminder = settingsDoc.safeBoolean("dailyReminderEnabled") ?: true
+                            val dark = settingsDoc.safeBoolean("isDarkMode") ?: false
+                            val systemTheme = settingsDoc.safeBoolean("useSystemTheme") ?: true
+
+                            restoredSettingsObj = UserSettings(
+                                userId = userId,
+                                language = lang,
+                                numeralSystem = numeral,
+                                defaultCurrency = currency,
+                                currencySymbol = symbol,
+                                hideBalances = hideBal,
+                                pinEnabled = pinEn,
+                                pinCode = pin,
+                                dailyReminderEnabled = dailyReminder,
+                                isDarkMode = dark,
+                                useSystemTheme = systemTheme
+                            )
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Settings fetch for candidate $candId failed: ${e.message}")
+                    }
+                }
             }
+
+            if (!anyNetworkCallSucceeded && lastNetworkException != null) {
+                return@withContext Result.failure(lastNetworkException)
+            }
+
+            val remoteAccounts = accountsMap.values.toList()
+            val remoteCategories = categoriesMap.values.toList()
+            val remoteTransactions = transactionsMap.values.toList()
+            val budgets = budgetsMap.values.toList()
+            val goals = goalsMap.values.toList()
+            val contacts = contactsMap.values.toList()
+            val debts = debtsMap.values.toList()
+            val repayments = repaymentsMap.values.toList()
+            val vendors = vendorsMap.values.toList()
+            val purchases = purchasesMap.values.toList()
+            val payments = paymentsMap.values.toList()
+            val rules = rulesMap.values.toList()
+
+            val hasCloudData = remoteAccounts.isNotEmpty() ||
+                    remoteTransactions.isNotEmpty() ||
+                    remoteCategories.isNotEmpty() ||
+                    budgets.isNotEmpty() ||
+                    goals.isNotEmpty() ||
+                    contacts.isNotEmpty() ||
+                    debts.isNotEmpty() ||
+                    repayments.isNotEmpty() ||
+                    vendors.isNotEmpty() ||
+                    purchases.isNotEmpty() ||
+                    payments.isNotEmpty() ||
+                    rules.isNotEmpty() ||
+                    restoredSettingsObj != null
+
+            if (!hasCloudData) {
+                Log.i(TAG, "No cloud data found across candidate IDs for user $userId")
+                return@withContext Result.success(CloudRestoreSummary(hasCloudData = false))
+            }
+
+            Log.i(
+                TAG,
+                "Restoring cloud data for user $userId: accounts=${remoteAccounts.size}, " +
+                        "txs=${remoteTransactions.size}, cats=${remoteCategories.size}, debts=${debts.size}, vendors=${vendors.size}"
+            )
+
+            // 1. Insert Accounts
             if (remoteAccounts.isNotEmpty()) {
-                val localTxCount = transactionDao.getAllTransactionsList(userId).size
-                if (localTxCount == 0) {
-                    accountDao.deleteAllAccountsForUser(userId)
+                for (acc in remoteAccounts) {
+                    try {
+                        accountDao.insertAccount(acc)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Insert account ${acc.id} failed: ${e.message}")
+                    }
                 }
-                accountDao.insertAccounts(remoteAccounts)
             }
 
-            onProgress?.invoke("Restoring categories...", 0.30f)
-
-            // 2. Restore Categories
-            val remoteCategories = remoteCategoriesSnap.documents.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val nameBn = doc.getString("nameBn") ?: ""
-                val nameEn = doc.getString("nameEn") ?: ""
-                val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
-                val iconName = doc.getString("iconName") ?: "category"
-                val colorHex = doc.getString("colorHex") ?: "#64748B"
-                val isDefault = doc.getBoolean("isDefault") ?: false
-                val isArchived = doc.getBoolean("isArchived") ?: false
-
-                Category(
-                    id = id,
-                    userId = userId,
-                    nameBn = nameBn,
-                    nameEn = nameEn,
-                    type = type,
-                    iconName = iconName,
-                    colorHex = colorHex,
-                    isDefault = isDefault,
-                    isArchived = isArchived
-                )
+            // Collect all referenced account IDs and vendor IDs from child records to guarantee ForeignKeys!
+            val requiredAccountIds = mutableSetOf<Long>()
+            remoteTransactions.forEach { tx ->
+                requiredAccountIds.add(tx.accountId)
+                tx.toAccountId?.let { requiredAccountIds.add(it) }
             }
+            debts.forEach { requiredAccountIds.add(it.accountId) }
+            repayments.forEach { requiredAccountIds.add(it.accountId) }
+            payments.forEach { requiredAccountIds.add(it.accountId) }
+            rules.forEach { requiredAccountIds.add(it.accountId) }
+            if (remoteAccounts.isEmpty()) {
+                requiredAccountIds.addAll(listOf(1L, 2L, 3L, 4L))
+            }
+
+            onProgress?.invoke("Restoring categories...", 0.35f)
+
+            // 2. Insert Categories & ensure defaults if empty
             if (remoteCategories.isNotEmpty()) {
-                val localTxCount = transactionDao.getAllTransactionsList(userId).size
-                if (localTxCount == 0) {
-                    categoryDao.deleteAllCategoriesForUser(userId)
+                for (cat in remoteCategories) {
+                    try {
+                        categoryDao.insertCategory(cat)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Insert category ${cat.id} failed: ${e.message}")
+                    }
                 }
-                categoryDao.insertCategories(remoteCategories)
+            }
+            ensureDefaultCategoriesIfEmpty(userId)
+
+            // 3. Insert Vendors BEFORE Shop Credit Purchases & Payments
+            if (vendors.isNotEmpty()) {
+                for (v in vendors) {
+                    try {
+                        vendorDao.insertVendor(v)
+                    } catch (e: Exception) {
+                        Log.w(TAG, "Insert vendor ${v.id} failed: ${e.message}")
+                    }
+                }
             }
 
-            onProgress?.invoke("Restoring transactions...", 0.50f)
+            val requiredVendorIds = mutableSetOf<Long>()
+            purchases.forEach { requiredVendorIds.add(it.vendorId) }
+            payments.forEach { requiredVendorIds.add(it.vendorId) }
 
-            // 3. Restore Transactions (full collection)
-            val fullTxSnap = userDocRef.collection(COLLECTION_TRANSACTIONS).get().awaitTask(8000L)
-            val remoteTransactions = fullTxSnap.documents.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val accountId = doc.getLong("accountId") ?: return@mapNotNull null
-                val amount = doc.getDouble("amount") ?: 0.0
-                val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
-                val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                val note = doc.getString("note") ?: ""
-                val fee = doc.getDouble("fee") ?: 0.0
-                val categoryId = doc.getLong("categoryId")
-                val toAccountId = doc.getLong("toAccountId")
-                val receiptUri = doc.getString("receiptUri")
-                val exchangeRate = doc.getDouble("exchangeRate") ?: 1.0
-                val isRecurringInstance = doc.getBoolean("isRecurringInstance") ?: false
-                val recurringRuleId = doc.getLong("recurringRuleId")
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+            // Ensure all foreign keys (User, Accounts, Vendors) exist in Room BEFORE inserting Transactions/Debts/Purchases/Payments!
+            ensureLocalUserAndForeignKeys(
+                userId = userId,
+                requiredAccountIds = requiredAccountIds,
+                requiredVendorIds = requiredVendorIds
+            )
 
-                TransactionRecord(
-                    id = id,
-                    userId = userId,
-                    accountId = accountId,
-                    categoryId = categoryId,
-                    toAccountId = toAccountId,
-                    amount = amount,
-                    fee = fee,
-                    type = type,
-                    dateTimestamp = dateTimestamp,
-                    note = note,
-                    receiptUri = receiptUri,
-                    exchangeRate = exchangeRate,
-                    isRecurringInstance = isRecurringInstance,
-                    recurringRuleId = recurringRuleId,
-                    createdAt = createdAt
-                )
-            }
+            onProgress?.invoke("Restoring transactions...", 0.55f)
+
+            // 4. Insert Transactions safely
+            var insertedTxCount = 0
             if (remoteTransactions.isNotEmpty()) {
-                transactionDao.insertTransactions(remoteTransactions)
+                try {
+                    transactionDao.insertTransactions(remoteTransactions)
+                    insertedTxCount = remoteTransactions.size
+                } catch (e: Exception) {
+                    Log.w(TAG, "Batch insertTransactions failed (${e.message}), falling back to per-item insert")
+                    for (tx in remoteTransactions) {
+                        try {
+                            ensureLocalUserAndForeignKeys(
+                                userId = userId,
+                                requiredAccountIds = setOfNotNull(tx.accountId, tx.toAccountId)
+                            )
+                            transactionDao.insertTransaction(tx)
+                            insertedTxCount++
+                        } catch (inner: Exception) {
+                            Log.w(TAG, "Single insertTransaction ${tx.id} failed: ${inner.message}")
+                        }
+                    }
+                }
             }
 
-            onProgress?.invoke("Restoring budgets and savings goals...", 0.68f)
+            onProgress?.invoke("Restoring budgets and savings goals...", 0.72f)
 
-            // 4. Restore Budgets
+            // 5. Insert Budgets
             var budgetsCount = 0
-            try {
-                val budgetSnap = userDocRef.collection(COLLECTION_BUDGETS).get().awaitTask(5000L)
-                val budgets = budgetSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val categoryId = doc.getLong("categoryId")
-                    val monthYear = doc.getString("monthYear") ?: return@mapNotNull null
-                    val limitAmount = doc.getDouble("limitAmount") ?: 0.0
-                    Budget(
-                        id = id,
-                        userId = userId,
-                        categoryId = categoryId,
-                        monthYear = monthYear,
-                        limitAmount = limitAmount
-                    )
+            for (b in budgets) {
+                try {
+                    budgetDao.insertBudgets(listOf(b))
+                    budgetsCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert budget ${b.id} failed: ${e.message}")
                 }
-                if (budgets.isNotEmpty()) {
-                    budgetDao.insertBudgets(budgets)
-                    budgetsCount = budgets.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring budgets failed: ${e.message}")
             }
 
-            // 5. Restore Savings Goals
+            // 6. Insert Savings Goals
             var goalsCount = 0
-            try {
-                val goalSnap = userDocRef.collection(COLLECTION_SAVINGS_GOALS).get().awaitTask(5000L)
-                val goals = goalSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val name = doc.getString("name") ?: ""
-                    val targetAmount = doc.getDouble("targetAmount") ?: 0.0
-                    val currentSavedAmount = doc.getDouble("currentSavedAmount") ?: 0.0
-                    val targetDate = doc.getLong("targetDate")
-                    val note = doc.getString("note") ?: ""
-                    val colorHex = doc.getString("colorHex") ?: "#0D9488"
-                    val iconName = doc.getString("iconName") ?: "savings"
-                    val isCompleted = doc.getBoolean("isCompleted") ?: false
-                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                    SavingsGoal(
-                        id = id,
-                        userId = userId,
-                        name = name,
-                        targetAmount = targetAmount,
-                        currentSavedAmount = currentSavedAmount,
-                        targetDate = targetDate,
-                        note = note,
-                        colorHex = colorHex,
-                        iconName = iconName,
-                        isCompleted = isCompleted,
-                        createdAt = createdAt
-                    )
+            for (g in goals) {
+                try {
+                    savingsGoalDao.insertGoal(g)
+                    goalsCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert goal ${g.id} failed: ${e.message}")
                 }
-                if (goals.isNotEmpty()) {
-                    savingsGoalDao.insertGoals(goals)
-                    goalsCount = goals.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring savings goals failed: ${e.message}")
             }
 
-            onProgress?.invoke("Restoring loans, debts and shops...", 0.82f)
+            onProgress?.invoke("Restoring loans, debts and shops...", 0.85f)
 
-            // 6. Restore Contacts
-            var contactsCount = 0
-            try {
-                val contactSnap = userDocRef.collection(COLLECTION_CONTACTS).get().awaitTask(5000L)
-                val contacts = contactSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val name = doc.getString("name") ?: ""
-                    val phone = doc.getString("phone") ?: ""
-                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                    Contact(
-                        id = id,
-                        userId = userId,
-                        name = name,
-                        phone = phone,
-                        createdAt = createdAt
-                    )
+            // 7. Insert Contacts
+            for (c in contacts) {
+                try {
+                    contactDao.insertContact(c)
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert contact ${c.id} failed: ${e.message}")
                 }
-                if (contacts.isNotEmpty()) {
-                    contactDao.insertContacts(contacts)
-                    contactsCount = contacts.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring contacts failed: ${e.message}")
             }
 
-            // 7. Restore Loans & Debts
+            // 8. Insert Loans & Debts
             var debtsCount = 0
-            try {
-                val debtSnap = userDocRef.collection(COLLECTION_LOANS_DEBTS).get().awaitTask(5000L)
-                val debts = debtSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val contactId = doc.getLong("contactId") ?: 0L
-                    val personName = doc.getString("personName") ?: ""
-                    val accountId = doc.getLong("accountId") ?: 1L
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val paidAmount = doc.getDouble("paidAmount") ?: 0.0
-                    val typeStr = doc.getString("type") ?: DebtType.OWED_TO_ME.name
-                    val type = try { DebtType.valueOf(typeStr) } catch (e: Exception) { DebtType.OWED_TO_ME }
-                    val dueDate = doc.getLong("dueDate")
-                    val note = doc.getString("note") ?: ""
-                    val phone = doc.getString("phone") ?: ""
-                    val isSettled = doc.getBoolean("isSettled") ?: false
-                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                    val transactionId = doc.getLong("transactionId")
-                    LoanDebt(
-                        id = id,
-                        userId = userId,
-                        contactId = contactId,
-                        personName = personName,
-                        accountId = accountId,
-                        amount = amount,
-                        paidAmount = paidAmount,
-                        type = type,
-                        dueDate = dueDate,
-                        note = note,
-                        phone = phone,
-                        isSettled = isSettled,
-                        createdAt = createdAt,
-                        transactionId = transactionId
-                    )
+            for (d in debts) {
+                try {
+                    loanDebtDao.insertDebt(d)
+                    debtsCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert debt ${d.id} failed: ${e.message}")
                 }
-                if (debts.isNotEmpty()) {
-                    loanDebtDao.insertDebts(debts)
-                    debtsCount = debts.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring loans & debts failed: ${e.message}")
             }
 
-            // 8. Restore Loan Repayments
+            // 9. Insert Loan Repayments
             var repaymentsCount = 0
-            try {
-                val repaymentSnap = userDocRef.collection(COLLECTION_LOAN_REPAYMENTS).get().awaitTask(5000L)
-                val repayments = repaymentSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val loanId = doc.getLong("loanId") ?: return@mapNotNull null
-                    val accountId = doc.getLong("accountId") ?: 1L
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                    val note = doc.getString("note") ?: ""
-                    val transactionId = doc.getLong("transactionId")
-                    LoanRepayment(
-                        id = id,
-                        userId = userId,
-                        loanId = loanId,
-                        accountId = accountId,
-                        amount = amount,
-                        dateTimestamp = dateTimestamp,
-                        note = note,
-                        transactionId = transactionId
-                    )
+            for (r in repayments) {
+                try {
+                    loanRepaymentDao.insertRepayment(r)
+                    repaymentsCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert repayment ${r.id} failed: ${e.message}")
                 }
-                if (repayments.isNotEmpty()) {
-                    loanRepaymentDao.insertRepayments(repayments)
-                    repaymentsCount = repayments.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring repayments failed: ${e.message}")
             }
 
-            // 9. Restore Vendors
-            var vendorsCount = 0
-            try {
-                val vendorSnap = userDocRef.collection(COLLECTION_VENDORS).get().awaitTask(5000L)
-                val vendors = vendorSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val name = doc.getString("name") ?: ""
-                    val phone = doc.getString("phone") ?: ""
-                    val locationNote = doc.getString("locationNote") ?: ""
-                    val categoryTag = doc.getString("categoryTag") ?: ""
-                    val isArchived = doc.getBoolean("isArchived") ?: false
-                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                    Vendor(
-                        id = id,
-                        userId = userId,
-                        name = name,
-                        phone = phone,
-                        locationNote = locationNote,
-                        categoryTag = categoryTag,
-                        isArchived = isArchived,
-                        createdAt = createdAt
-                    )
-                }
-                if (vendors.isNotEmpty()) {
-                    vendorDao.insertVendors(vendors)
-                    vendorsCount = vendors.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring vendors failed: ${e.message}")
-            }
-
-            // 10. Restore Shop Credit Purchases
+            // 10. Insert Shop Credit Purchases
             var shopPurchasesCount = 0
-            try {
-                val purchaseSnap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PURCHASES).get().awaitTask(5000L)
-                val purchases = purchaseSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val vendorId = doc.getLong("vendorId") ?: return@mapNotNull null
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val paidAmount = doc.getDouble("paidAmount") ?: 0.0
-                    val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                    val dueDate = doc.getLong("dueDate")
-                    val note = doc.getString("note") ?: ""
-                    val isSettled = doc.getBoolean("isSettled") ?: false
-                    ShopCreditPurchase(
-                        id = id,
-                        userId = userId,
-                        vendorId = vendorId,
-                        amount = amount,
-                        paidAmount = paidAmount,
-                        dateTimestamp = dateTimestamp,
-                        dueDate = dueDate,
-                        note = note,
-                        isSettled = isSettled
-                    )
+            for (p in purchases) {
+                try {
+                    shopCreditPurchaseDao.insertPurchase(p)
+                    shopPurchasesCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert purchase ${p.id} failed: ${e.message}")
                 }
-                if (purchases.isNotEmpty()) {
-                    shopCreditPurchaseDao.insertPurchases(purchases)
-                    shopPurchasesCount = purchases.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring purchases failed: ${e.message}")
             }
 
-            // 11. Restore Shop Credit Payments
+            // 11. Insert Shop Credit Payments
             var shopPaymentsCount = 0
-            try {
-                val paymentSnap = userDocRef.collection(COLLECTION_SHOP_CREDIT_PAYMENTS).get().awaitTask(5000L)
-                val payments = paymentSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val vendorId = doc.getLong("vendorId") ?: return@mapNotNull null
-                    val accountId = doc.getLong("accountId") ?: 1L
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                    val note = doc.getString("note") ?: ""
-                    val transactionId = doc.getLong("transactionId")
-                    ShopCreditPayment(
-                        id = id,
-                        userId = userId,
-                        vendorId = vendorId,
-                        accountId = accountId,
-                        amount = amount,
-                        dateTimestamp = dateTimestamp,
-                        note = note,
-                        transactionId = transactionId
-                    )
+            for (pay in payments) {
+                try {
+                    shopCreditPaymentDao.insertPayment(pay)
+                    shopPaymentsCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert payment ${pay.id} failed: ${e.message}")
                 }
-                if (payments.isNotEmpty()) {
-                    shopCreditPaymentDao.insertPayments(payments)
-                    shopPaymentsCount = payments.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring payments failed: ${e.message}")
             }
 
-            // 12. Restore Recurring Rules
+            // 12. Insert Recurring Rules
             var recurringCount = 0
-            try {
-                val ruleSnap = userDocRef.collection(COLLECTION_RECURRING_RULES).get().awaitTask(5000L)
-                val rules = ruleSnap.documents.mapNotNull { doc ->
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                    val accountId = doc.getLong("accountId") ?: 1L
-                    val categoryId = doc.getLong("categoryId")
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                    val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
-                    val freqStr = doc.getString("frequency") ?: Frequency.MONTHLY.name
-                    val frequency = try { Frequency.valueOf(freqStr) } catch (e: Exception) { Frequency.MONTHLY }
-                    val startDate = doc.getLong("startDate") ?: System.currentTimeMillis()
-                    val endDate = doc.getLong("endDate")
-                    val lastGeneratedDate = doc.getLong("lastGeneratedDate") ?: 0L
-                    val isPaused = doc.getBoolean("isPaused") ?: false
-                    val note = doc.getString("note") ?: ""
-                    RecurringRule(
-                        id = id,
-                        userId = userId,
-                        accountId = accountId,
-                        categoryId = categoryId,
-                        amount = amount,
-                        type = type,
-                        frequency = frequency,
-                        startDate = startDate,
-                        endDate = endDate,
-                        lastGeneratedDate = lastGeneratedDate,
-                        isPaused = isPaused,
-                        note = note
-                    )
+            for (rule in rules) {
+                try {
+                    recurringDao.insertRule(rule)
+                    recurringCount++
+                } catch (e: Exception) {
+                    Log.w(TAG, "Insert recurring rule ${rule.id} failed: ${e.message}")
                 }
-                if (rules.isNotEmpty()) {
-                    recurringDao.insertRules(rules)
-                    recurringCount = rules.size
-                }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring recurring rules failed: ${e.message}")
             }
 
             onProgress?.invoke("Applying settings and preferences...", 0.94f)
 
-            // 13. Restore User Preferences / Settings
+            // 13. Restore User Settings
             var settingsRestored = false
-            try {
-                val settingsDoc = userDocRef.collection(COLLECTION_SETTINGS).document(DOC_PREFERENCES).get().awaitTask(4000L)
-                if (settingsDoc.exists()) {
-                    val lang = settingsDoc.getString("language") ?: "bn"
-                    val numeral = settingsDoc.getString("numeralSystem") ?: "bn"
-                    val currency = settingsDoc.getString("defaultCurrency") ?: "BDT"
-                    val symbol = settingsDoc.getString("currencySymbol") ?: "৳"
-                    val hideBal = settingsDoc.getBoolean("hideBalances") ?: false
-                    val pinEn = settingsDoc.getBoolean("pinEnabled") ?: false
-                    val pin = settingsDoc.getString("pinCode") ?: ""
-                    val dailyReminder = settingsDoc.getBoolean("dailyReminderEnabled") ?: true
-                    val dark = settingsDoc.getBoolean("isDarkMode") ?: false
-                    val systemTheme = settingsDoc.getBoolean("useSystemTheme") ?: true
-
-                    val restoredSettings = UserSettings(
-                        userId = userId,
-                        language = lang,
-                        numeralSystem = numeral,
-                        defaultCurrency = currency,
-                        currencySymbol = symbol,
-                        hideBalances = hideBal,
-                        pinEnabled = pinEn,
-                        pinCode = pin,
-                        dailyReminderEnabled = dailyReminder,
-                        isDarkMode = dark,
-                        useSystemTheme = systemTheme
-                    )
+            restoredSettingsObj?.let { restoredSettings ->
+                try {
                     settingsDao.insertOrUpdate(restoredSettings)
-
                     val prefs = context.getSharedPreferences("hisab_settings_prefs", Context.MODE_PRIVATE)
                     prefs.edit()
-                        .putString("language", lang)
-                        .putString("numeral_system", numeral)
-                        .putBoolean("is_dark_mode", dark)
-                        .putBoolean("use_system_theme", systemTheme)
+                        .putString("language", restoredSettings.language)
+                        .putString("numeral_system", restoredSettings.numeralSystem)
+                        .putBoolean("is_dark_mode", restoredSettings.isDarkMode)
+                        .putBoolean("use_system_theme", restoredSettings.useSystemTheme)
                         .apply()
                     settingsRestored = true
+                } catch (e: Exception) {
+                    Log.w(TAG, "Restoring user settings failed: ${e.message}")
                 }
-            } catch (e: Exception) {
-                Log.w(TAG, "Restoring user settings failed: ${e.message}")
             }
 
+            val finalAccountsCount = accountDao.getAllAccountsList(userId).size
+
             onProgress?.invoke("Restoration complete!", 1.0f)
-            Log.i(TAG, "Successfully restored all cloud data for user $userId")
+            Log.i(TAG, "Successfully restored cloud data for user $userId (accounts=$finalAccountsCount, txs=$insertedTxCount)")
 
             val summary = CloudRestoreSummary(
-                accountsCount = remoteAccounts.size,
-                transactionsCount = remoteTransactions.size,
-                categoriesCount = remoteCategories.size,
+                accountsCount = finalAccountsCount,
+                transactionsCount = insertedTxCount,
+                categoriesCount = categoryDao.getAllCategoriesList(userId).size,
                 budgetsCount = budgetsCount,
                 goalsCount = goalsCount,
                 debtsCount = debtsCount,
                 repaymentsCount = repaymentsCount,
-                vendorsCount = vendorsCount,
+                vendorsCount = vendorDao.getAllVendorsList(userId).size,
                 shopPurchasesCount = shopPurchasesCount,
                 shopPaymentsCount = shopPaymentsCount,
                 recurringCount = recurringCount,
@@ -1438,43 +1974,45 @@ class FirestoreRepositoryImpl(
             IllegalStateException("Firebase is not initialized")
         )
         try {
+            ensureLocalUserAndForeignKeys(userId)
+            val candidateIds = resolveCandidateUserIds(userId, firestore)
             var syncedCount = 0
 
             // 1. Sync Accounts
-            syncedCount += syncAccounts(userId, firestore)
+            syncedCount += syncAccounts(userId, candidateIds, firestore)
 
             // 2. Sync Categories
-            syncedCount += syncCategories(userId, firestore)
+            syncedCount += syncCategories(userId, candidateIds, firestore)
 
-            // 3. Sync Transactions
-            syncedCount += syncTransactions(userId, firestore)
+            // 3. Sync Vendors (before Shop Credit Purchases/Payments)
+            syncedCount += syncVendors(userId, candidateIds, firestore)
 
-            // 4. Sync Budgets
-            syncedCount += syncBudgets(userId, firestore)
+            // 4. Sync Transactions (ensures referenced Account IDs exist first)
+            syncedCount += syncTransactions(userId, candidateIds, firestore)
 
-            // 5. Sync Savings Goals
-            syncedCount += syncSavingsGoals(userId, firestore)
+            // 5. Sync Budgets
+            syncedCount += syncBudgets(userId, candidateIds, firestore)
 
-            // 6. Sync Contacts
-            syncedCount += syncContacts(userId, firestore)
+            // 6. Sync Savings Goals
+            syncedCount += syncSavingsGoals(userId, candidateIds, firestore)
 
-            // 7. Sync Loans & Debts
-            syncedCount += syncLoansDebts(userId, firestore)
+            // 7. Sync Contacts
+            syncedCount += syncContacts(userId, candidateIds, firestore)
 
-            // 8. Sync Loan Repayments
-            syncedCount += syncLoanRepayments(userId, firestore)
+            // 8. Sync Loans & Debts
+            syncedCount += syncLoansDebts(userId, candidateIds, firestore)
 
-            // 9. Sync Vendors
-            syncedCount += syncVendors(userId, firestore)
+            // 9. Sync Loan Repayments
+            syncedCount += syncLoanRepayments(userId, candidateIds, firestore)
 
             // 10. Sync Shop Credit Purchases & Payments
-            syncedCount += syncShopCredit(userId, firestore)
+            syncedCount += syncShopCredit(userId, candidateIds, firestore)
 
             // 11. Sync Recurring Rules
-            syncedCount += syncRecurringRules(userId, firestore)
+            syncedCount += syncRecurringRules(userId, candidateIds, firestore)
 
             // 12. Sync User Preferences / Settings
-            syncUserSettings(userId, firestore)
+            syncUserSettings(userId, candidateIds, firestore)
 
             Log.i(TAG, "syncAllWithRoom complete for $userId. Total items synchronized: $syncedCount")
             Result.success(syncedCount)
@@ -1484,47 +2022,72 @@ class FirestoreRepositoryImpl(
         }
     }
 
-    private suspend fun syncAccounts(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncAccounts(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_ACCOUNTS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteAccountsMap = linkedMapOf<Long, UserAccount>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_ACCOUNTS)
+                val remoteSnap = try { collection.get().awaitTask(8000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: "Account"
+                        val typeStr = doc.safeString("type") ?: AccountType.CASH.name
+                        val type = try { AccountType.valueOf(typeStr) } catch (e: Exception) { AccountType.CASH }
+                        val currencyCode = doc.safeString("currencyCode") ?: "BDT"
+                        val startingBalance = doc.safeDouble("startingBalance") ?: 0.0
+                        val colorHex = doc.safeString("colorHex") ?: "#0F766E"
+                        val iconName = doc.safeString("iconName") ?: "payments"
+                        val isArchived = doc.safeBoolean("isArchived") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
 
-            val remoteAccounts = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val name = doc.getString("name") ?: "Account"
-                val typeStr = doc.getString("type") ?: AccountType.CASH.name
-                val type = try { AccountType.valueOf(typeStr) } catch (e: Exception) { AccountType.CASH }
-                val currencyCode = doc.getString("currencyCode") ?: "BDT"
-                val startingBalance = doc.getDouble("startingBalance") ?: 0.0
-                val colorHex = doc.getString("colorHex") ?: "#0F766E"
-                val iconName = doc.getString("iconName") ?: "payments"
-                val isArchived = doc.getBoolean("isArchived") ?: false
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
+                        val incoming = UserAccount(
+                            id = id,
+                            userId = userId,
+                            name = name,
+                            type = type,
+                            currencyCode = currencyCode,
+                            startingBalance = startingBalance,
+                            colorHex = colorHex,
+                            iconName = iconName,
+                            isArchived = isArchived,
+                            createdAt = createdAt
+                        )
+                        val existing = remoteAccountsMap[id]
+                        if (existing == null || (existing.startingBalance == 0.0 && incoming.startingBalance != 0.0)) {
+                            remoteAccountsMap[id] = incoming
+                        }
+                    }
+                }
+            }
 
-                UserAccount(
-                    id = id,
-                    userId = userId,
-                    name = name,
-                    type = type,
-                    currencyCode = currencyCode,
-                    startingBalance = startingBalance,
-                    colorHex = colorHex,
-                    iconName = iconName,
-                    isArchived = isArchived,
-                    createdAt = createdAt
-                )
-            } ?: emptyList()
+            val localAccountsBefore = accountDao.getAllAccountsList(userId).associateBy { it.id }
+            val remoteAccounts = remoteAccountsMap.values.map { remoteAcc ->
+                val localAcc = localAccountsBefore[remoteAcc.id]
+                if (localAcc != null && remoteAcc.startingBalance == 0.0 && localAcc.startingBalance != 0.0) {
+                    remoteAcc.copy(startingBalance = localAcc.startingBalance)
+                } else {
+                    remoteAcc
+                }
+            }
 
             if (remoteAccounts.isNotEmpty()) {
-                accountDao.insertAccounts(remoteAccounts)
-                count += remoteAccounts.size
+                for (acc in remoteAccounts) {
+                    try {
+                        accountDao.insertAccount(acc)
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "syncAccounts insertAccount ${acc.id} error: ${e.message}")
+                    }
+                }
             }
 
             val localAccounts = accountDao.getAllAccountsList(userId)
-            val remoteIds = remoteAccounts.map { it.id }.toSet()
+            val remoteIds = remoteAccountsMap.keys
             for (acc in localAccounts) {
-                if (!remoteIds.contains(acc.id)) {
+                val remoteMatch = remoteAccountsMap[acc.id]
+                if (!remoteIds.contains(acc.id) || (remoteMatch != null && remoteMatch.startingBalance == 0.0 && acc.startingBalance != 0.0)) {
                     saveAccount(userId, acc)
                     count++
                 }
@@ -1535,43 +2098,55 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncCategories(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncCategories(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_CATEGORIES)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteCatsMap = linkedMapOf<Long, Category>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_CATEGORIES)
+                val remoteSnap = try { collection.get().awaitTask(8000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val nameBn = doc.safeString("nameBn") ?: ""
+                        val nameEn = doc.safeString("nameEn") ?: ""
+                        val typeStr = doc.safeString("type") ?: TransactionType.EXPENSE.name
+                        val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
+                        val iconName = doc.safeString("iconName") ?: "category"
+                        val colorHex = doc.safeString("colorHex") ?: "#64748B"
+                        val isDefault = doc.safeBoolean("isDefault") ?: false
+                        val isArchived = doc.safeBoolean("isArchived") ?: false
 
-            val remoteCats = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val nameBn = doc.getString("nameBn") ?: ""
-                val nameEn = doc.getString("nameEn") ?: ""
-                val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
-                val iconName = doc.getString("iconName") ?: "category"
-                val colorHex = doc.getString("colorHex") ?: "#64748B"
-                val isDefault = doc.getBoolean("isDefault") ?: false
-                val isArchived = doc.getBoolean("isArchived") ?: false
+                        if (!remoteCatsMap.containsKey(id)) {
+                            remoteCatsMap[id] = Category(
+                                id = id,
+                                userId = userId,
+                                nameBn = nameBn,
+                                nameEn = nameEn,
+                                type = type,
+                                iconName = iconName,
+                                colorHex = colorHex,
+                                isDefault = isDefault,
+                                isArchived = isArchived
+                            )
+                        }
+                    }
+                }
+            }
 
-                Category(
-                    id = id,
-                    userId = userId,
-                    nameBn = nameBn,
-                    nameEn = nameEn,
-                    type = type,
-                    iconName = iconName,
-                    colorHex = colorHex,
-                    isDefault = isDefault,
-                    isArchived = isArchived
-                )
-            } ?: emptyList()
-
-            if (remoteCats.isNotEmpty()) {
-                categoryDao.insertCategories(remoteCats)
-                count += remoteCats.size
+            if (remoteCatsMap.isNotEmpty()) {
+                for (cat in remoteCatsMap.values) {
+                    try {
+                        categoryDao.insertCategory(cat)
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "syncCategories insert ${cat.id} error: ${e.message}")
+                    }
+                }
             }
 
             val localCats = categoryDao.getAllCategoriesList(userId)
-            val remoteIds = remoteCats.map { it.id }.toSet()
+            val remoteIds = remoteCatsMap.keys
             for (cat in localCats) {
                 if (!remoteIds.contains(cat.id)) {
                     saveCategory(userId, cat)
@@ -1584,53 +2159,69 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncTransactions(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncTransactions(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_TRANSACTIONS)
-            val remoteSnap = try { collection.get().awaitTask(7000L) } catch (e: Exception) { null }
+            val remoteMap = linkedMapOf<Long, TransactionRecord>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_TRANSACTIONS)
+                val remoteSnap = try { collection.get().awaitTask(10000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val typeStr = doc.safeString("type") ?: TransactionType.EXPENSE.name
+                        val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val note = doc.safeString("note") ?: ""
+                        val fee = doc.safeDouble("fee") ?: 0.0
+                        val categoryId = doc.safeLong("categoryId")
+                        val toAccountId = doc.safeLong("toAccountId")
+                        val receiptUri = doc.safeString("receiptUri")
+                        val exchangeRate = doc.safeDouble("exchangeRate") ?: 1.0
+                        val isRecurringInstance = doc.safeBoolean("isRecurringInstance") ?: false
+                        val recurringRuleId = doc.safeLong("recurringRuleId")
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
 
-            val remoteMap = mutableMapOf<Long, TransactionRecord>()
-            if (remoteSnap != null) {
-                for (doc in remoteSnap.documents) {
-                    val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: continue
-                    val accountId = doc.getLong("accountId") ?: continue
-                    val amount = doc.getDouble("amount") ?: 0.0
-                    val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                    val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
-                    val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                    val note = doc.getString("note") ?: ""
-                    val fee = doc.getDouble("fee") ?: 0.0
-                    val categoryId = doc.getLong("categoryId")
-                    val toAccountId = doc.getLong("toAccountId")
-                    val receiptUri = doc.getString("receiptUri")
-                    val exchangeRate = doc.getDouble("exchangeRate") ?: 1.0
-                    val isRecurringInstance = doc.getBoolean("isRecurringInstance") ?: false
-                    val recurringRuleId = doc.getLong("recurringRuleId")
-                    val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-
-                    remoteMap[id] = TransactionRecord(
-                        id = id,
-                        userId = userId,
-                        accountId = accountId,
-                        categoryId = categoryId,
-                        toAccountId = toAccountId,
-                        amount = amount,
-                        fee = fee,
-                        type = type,
-                        dateTimestamp = dateTimestamp,
-                        note = note,
-                        receiptUri = receiptUri,
-                        exchangeRate = exchangeRate,
-                        isRecurringInstance = isRecurringInstance,
-                        recurringRuleId = recurringRuleId,
-                        createdAt = createdAt
-                    )
+                        if (!remoteMap.containsKey(id)) {
+                            remoteMap[id] = TransactionRecord(
+                                id = id,
+                                userId = userId,
+                                accountId = accountId,
+                                categoryId = categoryId,
+                                toAccountId = toAccountId,
+                                amount = amount,
+                                fee = fee,
+                                type = type,
+                                dateTimestamp = dateTimestamp,
+                                note = note,
+                                receiptUri = receiptUri,
+                                exchangeRate = exchangeRate,
+                                isRecurringInstance = isRecurringInstance,
+                                recurringRuleId = recurringRuleId,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
                 }
+            }
 
-                if (remoteMap.isNotEmpty()) {
-                    transactionDao.insertTransactions(remoteMap.values.toList())
-                    count += remoteMap.size
+            if (remoteMap.isNotEmpty()) {
+                val requiredAccountIds = mutableSetOf<Long>()
+                remoteMap.values.forEach { tx ->
+                    requiredAccountIds.add(tx.accountId)
+                    tx.toAccountId?.let { requiredAccountIds.add(it) }
+                }
+                ensureLocalUserAndForeignKeys(userId = userId, requiredAccountIds = requiredAccountIds)
+
+                for (tx in remoteMap.values) {
+                    try {
+                        transactionDao.insertTransaction(tx)
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "syncTransactions insert ${tx.id} error: ${e.message}")
+                    }
                 }
             }
 
@@ -1647,33 +2238,43 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncBudgets(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncBudgets(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_BUDGETS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteBudgetsMap = linkedMapOf<Long, Budget>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_BUDGETS)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val categoryId = doc.safeLong("categoryId")
+                        val monthYear = doc.safeString("monthYear") ?: continue
+                        val limitAmount = doc.safeDouble("limitAmount") ?: 0.0
+                        if (!remoteBudgetsMap.containsKey(id)) {
+                            remoteBudgetsMap[id] = Budget(
+                                id = id,
+                                userId = userId,
+                                categoryId = categoryId,
+                                monthYear = monthYear,
+                                limitAmount = limitAmount
+                            )
+                        }
+                    }
+                }
+            }
 
-            val remoteBudgets = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val categoryId = doc.getLong("categoryId")
-                val monthYear = doc.getString("monthYear") ?: return@mapNotNull null
-                val limitAmount = doc.getDouble("limitAmount") ?: 0.0
-                Budget(
-                    id = id,
-                    userId = userId,
-                    categoryId = categoryId,
-                    monthYear = monthYear,
-                    limitAmount = limitAmount
-                )
-            } ?: emptyList()
-
-            if (remoteBudgets.isNotEmpty()) {
-                budgetDao.insertBudgets(remoteBudgets)
-                count += remoteBudgets.size
+            for (b in remoteBudgetsMap.values) {
+                try {
+                    budgetDao.insertBudgets(listOf(b))
+                    count++
+                } catch (e: Exception) {
+                    Log.w(TAG, "syncBudgets insert ${b.id} error: ${e.message}")
+                }
             }
 
             val localBudgets = budgetDao.getAllBudgetsList(userId)
-            val remoteIds = remoteBudgets.map { it.id }.toSet()
+            val remoteIds = remoteBudgetsMap.keys
             for (b in localBudgets) {
                 if (!remoteIds.contains(b.id)) {
                     saveBudget(userId, b)
@@ -1686,45 +2287,55 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncSavingsGoals(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncSavingsGoals(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_SAVINGS_GOALS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteGoalsMap = linkedMapOf<Long, SavingsGoal>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_SAVINGS_GOALS)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: ""
+                        val targetAmount = doc.safeDouble("targetAmount") ?: 0.0
+                        val currentSavedAmount = doc.safeDouble("currentSavedAmount") ?: 0.0
+                        val targetDate = doc.safeLong("targetDate")
+                        val note = doc.safeString("note") ?: ""
+                        val colorHex = doc.safeString("colorHex") ?: "#0D9488"
+                        val iconName = doc.safeString("iconName") ?: "savings"
+                        val isCompleted = doc.safeBoolean("isCompleted") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        if (!remoteGoalsMap.containsKey(id)) {
+                            remoteGoalsMap[id] = SavingsGoal(
+                                id = id,
+                                userId = userId,
+                                name = name,
+                                targetAmount = targetAmount,
+                                currentSavedAmount = currentSavedAmount,
+                                targetDate = targetDate,
+                                note = note,
+                                colorHex = colorHex,
+                                iconName = iconName,
+                                isCompleted = isCompleted,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
+                }
+            }
 
-            val remoteGoals = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val name = doc.getString("name") ?: ""
-                val targetAmount = doc.getDouble("targetAmount") ?: 0.0
-                val currentSavedAmount = doc.getDouble("currentSavedAmount") ?: 0.0
-                val targetDate = doc.getLong("targetDate")
-                val note = doc.getString("note") ?: ""
-                val colorHex = doc.getString("colorHex") ?: "#0D9488"
-                val iconName = doc.getString("iconName") ?: "savings"
-                val isCompleted = doc.getBoolean("isCompleted") ?: false
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                SavingsGoal(
-                    id = id,
-                    userId = userId,
-                    name = name,
-                    targetAmount = targetAmount,
-                    currentSavedAmount = currentSavedAmount,
-                    targetDate = targetDate,
-                    note = note,
-                    colorHex = colorHex,
-                    iconName = iconName,
-                    isCompleted = isCompleted,
-                    createdAt = createdAt
-                )
-            } ?: emptyList()
-
-            if (remoteGoals.isNotEmpty()) {
-                savingsGoalDao.insertGoals(remoteGoals)
-                count += remoteGoals.size
+            for (g in remoteGoalsMap.values) {
+                try {
+                    savingsGoalDao.insertGoal(g)
+                    count++
+                } catch (e: Exception) {
+                    Log.w(TAG, "syncSavingsGoals insert ${g.id} error: ${e.message}")
+                }
             }
 
             val localGoals = savingsGoalDao.getAllGoalsList(userId)
-            val remoteIds = remoteGoals.map { it.id }.toSet()
+            val remoteIds = remoteGoalsMap.keys
             for (g in localGoals) {
                 if (!remoteIds.contains(g.id)) {
                     saveSavingsGoal(userId, g)
@@ -1737,27 +2348,37 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncContacts(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncContacts(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_CONTACTS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteContactsMap = linkedMapOf<Long, Contact>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_CONTACTS)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: ""
+                        val phone = doc.safeString("phone") ?: ""
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        if (!remoteContactsMap.containsKey(id)) {
+                            remoteContactsMap[id] = Contact(id = id, userId = userId, name = name, phone = phone, createdAt = createdAt)
+                        }
+                    }
+                }
+            }
 
-            val remoteContacts = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val name = doc.getString("name") ?: ""
-                val phone = doc.getString("phone") ?: ""
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                Contact(id = id, userId = userId, name = name, phone = phone, createdAt = createdAt)
-            } ?: emptyList()
-
-            if (remoteContacts.isNotEmpty()) {
-                contactDao.insertContacts(remoteContacts)
-                count += remoteContacts.size
+            for (c in remoteContactsMap.values) {
+                try {
+                    contactDao.insertContact(c)
+                    count++
+                } catch (e: Exception) {
+                    Log.w(TAG, "syncContacts insert ${c.id} error: ${e.message}")
+                }
             }
 
             val localContacts = contactDao.getAllContactsList(userId)
-            val remoteIds = remoteContacts.map { it.id }.toSet()
+            val remoteIds = remoteContactsMap.keys
             for (c in localContacts) {
                 if (!remoteIds.contains(c.id)) {
                     saveContact(userId, c)
@@ -1770,52 +2391,66 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncLoansDebts(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncLoansDebts(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_LOANS_DEBTS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteDebtsMap = linkedMapOf<Long, LoanDebt>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_LOANS_DEBTS)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val contactId = doc.safeLong("contactId") ?: 0L
+                        val personName = doc.safeString("personName") ?: ""
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val paidAmount = doc.safeDouble("paidAmount") ?: 0.0
+                        val typeStr = doc.safeString("type") ?: DebtType.OWED_TO_ME.name
+                        val type = try { DebtType.valueOf(typeStr) } catch (e: Exception) { DebtType.OWED_TO_ME }
+                        val dueDate = doc.safeLong("dueDate")
+                        val note = doc.safeString("note") ?: ""
+                        val phone = doc.safeString("phone") ?: ""
+                        val isSettled = doc.safeBoolean("isSettled") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        val transactionId = doc.safeLong("transactionId")
+                        if (!remoteDebtsMap.containsKey(id)) {
+                            remoteDebtsMap[id] = LoanDebt(
+                                id = id,
+                                userId = userId,
+                                contactId = contactId,
+                                personName = personName,
+                                accountId = accountId,
+                                amount = amount,
+                                paidAmount = paidAmount,
+                                type = type,
+                                dueDate = dueDate,
+                                note = note,
+                                phone = phone,
+                                isSettled = isSettled,
+                                createdAt = createdAt,
+                                transactionId = transactionId
+                            )
+                        }
+                    }
+                }
+            }
 
-            val remoteDebts = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val contactId = doc.getLong("contactId") ?: 0L
-                val personName = doc.getString("personName") ?: ""
-                val accountId = doc.getLong("accountId") ?: 1L
-                val amount = doc.getDouble("amount") ?: 0.0
-                val paidAmount = doc.getDouble("paidAmount") ?: 0.0
-                val typeStr = doc.getString("type") ?: DebtType.OWED_TO_ME.name
-                val type = try { DebtType.valueOf(typeStr) } catch (e: Exception) { DebtType.OWED_TO_ME }
-                val dueDate = doc.getLong("dueDate")
-                val note = doc.getString("note") ?: ""
-                val phone = doc.getString("phone") ?: ""
-                val isSettled = doc.getBoolean("isSettled") ?: false
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                val transactionId = doc.getLong("transactionId")
-                LoanDebt(
-                    id = id,
-                    userId = userId,
-                    contactId = contactId,
-                    personName = personName,
-                    accountId = accountId,
-                    amount = amount,
-                    paidAmount = paidAmount,
-                    type = type,
-                    dueDate = dueDate,
-                    note = note,
-                    phone = phone,
-                    isSettled = isSettled,
-                    createdAt = createdAt,
-                    transactionId = transactionId
-                )
-            } ?: emptyList()
-
-            if (remoteDebts.isNotEmpty()) {
-                loanDebtDao.insertDebts(remoteDebts)
-                count += remoteDebts.size
+            if (remoteDebtsMap.isNotEmpty()) {
+                val reqAccounts = remoteDebtsMap.values.map { it.accountId }.toSet()
+                ensureLocalUserAndForeignKeys(userId = userId, requiredAccountIds = reqAccounts)
+                for (d in remoteDebtsMap.values) {
+                    try {
+                        loanDebtDao.insertDebt(d)
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "syncLoansDebts insert ${d.id} error: ${e.message}")
+                    }
+                }
             }
 
             val localDebts = loanDebtDao.getAllDebtsList(userId)
-            val remoteIds = remoteDebts.map { it.id }.toSet()
+            val remoteIds = remoteDebtsMap.keys
             for (d in localDebts) {
                 if (!remoteIds.contains(d.id)) {
                     saveLoanDebt(userId, d)
@@ -1828,39 +2463,53 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncLoanRepayments(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncLoanRepayments(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_LOAN_REPAYMENTS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteRepaymentsMap = linkedMapOf<Long, LoanRepayment>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_LOAN_REPAYMENTS)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val loanId = doc.safeLong("loanId") ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val note = doc.safeString("note") ?: ""
+                        val transactionId = doc.safeLong("transactionId")
+                        if (!remoteRepaymentsMap.containsKey(id)) {
+                            remoteRepaymentsMap[id] = LoanRepayment(
+                                id = id,
+                                userId = userId,
+                                loanId = loanId,
+                                accountId = accountId,
+                                amount = amount,
+                                dateTimestamp = dateTimestamp,
+                                note = note,
+                                transactionId = transactionId
+                            )
+                        }
+                    }
+                }
+            }
 
-            val remoteRepayments = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val loanId = doc.getLong("loanId") ?: return@mapNotNull null
-                val accountId = doc.getLong("accountId") ?: 1L
-                val amount = doc.getDouble("amount") ?: 0.0
-                val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                val note = doc.getString("note") ?: ""
-                val transactionId = doc.getLong("transactionId")
-                LoanRepayment(
-                    id = id,
-                    userId = userId,
-                    loanId = loanId,
-                    accountId = accountId,
-                    amount = amount,
-                    dateTimestamp = dateTimestamp,
-                    note = note,
-                    transactionId = transactionId
-                )
-            } ?: emptyList()
-
-            if (remoteRepayments.isNotEmpty()) {
-                loanRepaymentDao.insertRepayments(remoteRepayments)
-                count += remoteRepayments.size
+            if (remoteRepaymentsMap.isNotEmpty()) {
+                val reqAccounts = remoteRepaymentsMap.values.map { it.accountId }.toSet()
+                ensureLocalUserAndForeignKeys(userId = userId, requiredAccountIds = reqAccounts)
+                for (r in remoteRepaymentsMap.values) {
+                    try {
+                        loanRepaymentDao.insertRepayment(r)
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "syncLoanRepayments insert ${r.id} error: ${e.message}")
+                    }
+                }
             }
 
             val localRepayments = loanRepaymentDao.getAllRepaymentsList(userId)
-            val remoteIds = remoteRepayments.map { it.id }.toSet()
+            val remoteIds = remoteRepaymentsMap.keys
             for (r in localRepayments) {
                 if (!remoteIds.contains(r.id)) {
                     saveLoanRepayment(userId, r)
@@ -1873,39 +2522,49 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncVendors(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncVendors(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_VENDORS)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteVendorsMap = linkedMapOf<Long, Vendor>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_VENDORS)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val name = doc.safeString("name") ?: ""
+                        val phone = doc.safeString("phone") ?: ""
+                        val locationNote = doc.safeString("locationNote") ?: ""
+                        val categoryTag = doc.safeString("categoryTag") ?: ""
+                        val isArchived = doc.safeBoolean("isArchived") ?: false
+                        val createdAt = doc.safeLong("createdAt") ?: System.currentTimeMillis()
+                        if (!remoteVendorsMap.containsKey(id)) {
+                            remoteVendorsMap[id] = Vendor(
+                                id = id,
+                                userId = userId,
+                                name = name,
+                                phone = phone,
+                                locationNote = locationNote,
+                                categoryTag = categoryTag,
+                                isArchived = isArchived,
+                                createdAt = createdAt
+                            )
+                        }
+                    }
+                }
+            }
 
-            val remoteVendors = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val name = doc.getString("name") ?: ""
-                val phone = doc.getString("phone") ?: ""
-                val locationNote = doc.getString("locationNote") ?: ""
-                val categoryTag = doc.getString("categoryTag") ?: ""
-                val isArchived = doc.getBoolean("isArchived") ?: false
-                val createdAt = doc.getLong("createdAt") ?: System.currentTimeMillis()
-                Vendor(
-                    id = id,
-                    userId = userId,
-                    name = name,
-                    phone = phone,
-                    locationNote = locationNote,
-                    categoryTag = categoryTag,
-                    isArchived = isArchived,
-                    createdAt = createdAt
-                )
-            } ?: emptyList()
-
-            if (remoteVendors.isNotEmpty()) {
-                vendorDao.insertVendors(remoteVendors)
-                count += remoteVendors.size
+            for (v in remoteVendorsMap.values) {
+                try {
+                    vendorDao.insertVendor(v)
+                    count++
+                } catch (e: Exception) {
+                    Log.w(TAG, "syncVendors insert ${v.id} error: ${e.message}")
+                }
             }
 
             val localVendors = vendorDao.getAllVendorsList(userId)
-            val remoteIds = remoteVendors.map { it.id }.toSet()
+            val remoteIds = remoteVendorsMap.keys
             for (v in localVendors) {
                 if (!remoteIds.contains(v.id)) {
                     saveVendor(userId, v)
@@ -1918,41 +2577,89 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncShopCredit(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncShopCredit(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            // Purchases
-            val pColl = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_SHOP_CREDIT_PURCHASES)
-            val pSnap = try { pColl.get().awaitTask(5000L) } catch (e: Exception) { null }
-            val remotePurchases = pSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val vendorId = doc.getLong("vendorId") ?: return@mapNotNull null
-                val amount = doc.getDouble("amount") ?: 0.0
-                val paidAmount = doc.getDouble("paidAmount") ?: 0.0
-                val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                val dueDate = doc.getLong("dueDate")
-                val note = doc.getString("note") ?: ""
-                val isSettled = doc.getBoolean("isSettled") ?: false
-                ShopCreditPurchase(
-                    id = id,
-                    userId = userId,
-                    vendorId = vendorId,
-                    amount = amount,
-                    paidAmount = paidAmount,
-                    dateTimestamp = dateTimestamp,
-                    dueDate = dueDate,
-                    note = note,
-                    isSettled = isSettled
-                )
-            } ?: emptyList()
+            val remotePurchasesMap = linkedMapOf<Long, ShopCreditPurchase>()
+            val remotePaymentsMap = linkedMapOf<Long, ShopCreditPayment>()
 
-            if (remotePurchases.isNotEmpty()) {
-                shopCreditPurchaseDao.insertPurchases(remotePurchases)
-                count += remotePurchases.size
+            for (candId in candidateIds) {
+                val pColl = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_SHOP_CREDIT_PURCHASES)
+                val pSnap = try { pColl.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (pSnap != null) {
+                    for (doc in pSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val vendorId = doc.safeLong("vendorId") ?: continue
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val paidAmount = doc.safeDouble("paidAmount") ?: 0.0
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val dueDate = doc.safeLong("dueDate")
+                        val note = doc.safeString("note") ?: ""
+                        val isSettled = doc.safeBoolean("isSettled") ?: false
+                        if (!remotePurchasesMap.containsKey(id)) {
+                            remotePurchasesMap[id] = ShopCreditPurchase(
+                                id = id,
+                                userId = userId,
+                                vendorId = vendorId,
+                                amount = amount,
+                                paidAmount = paidAmount,
+                                dateTimestamp = dateTimestamp,
+                                dueDate = dueDate,
+                                note = note,
+                                isSettled = isSettled
+                            )
+                        }
+                    }
+                }
+
+                val payColl = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_SHOP_CREDIT_PAYMENTS)
+                val paySnap = try { payColl.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (paySnap != null) {
+                    for (doc in paySnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val vendorId = doc.safeLong("vendorId") ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val dateTimestamp = doc.safeLong("dateTimestamp") ?: System.currentTimeMillis()
+                        val note = doc.safeString("note") ?: ""
+                        val transactionId = doc.safeLong("transactionId")
+                        if (!remotePaymentsMap.containsKey(id)) {
+                            remotePaymentsMap[id] = ShopCreditPayment(
+                                id = id,
+                                userId = userId,
+                                vendorId = vendorId,
+                                accountId = accountId,
+                                amount = amount,
+                                dateTimestamp = dateTimestamp,
+                                note = note,
+                                transactionId = transactionId
+                            )
+                        }
+                    }
+                }
+            }
+
+            val reqVendors = (remotePurchasesMap.values.map { it.vendorId } + remotePaymentsMap.values.map { it.vendorId }).toSet()
+            val reqAccounts = remotePaymentsMap.values.map { it.accountId }.toSet()
+            if (reqVendors.isNotEmpty() || reqAccounts.isNotEmpty()) {
+                ensureLocalUserAndForeignKeys(
+                    userId = userId,
+                    requiredAccountIds = reqAccounts,
+                    requiredVendorIds = reqVendors
+                )
+            }
+
+            for (p in remotePurchasesMap.values) {
+                try {
+                    shopCreditPurchaseDao.insertPurchase(p)
+                    count++
+                } catch (e: Exception) {
+                    Log.w(TAG, "syncShopCredit insert purchase ${p.id} error: ${e.message}")
+                }
             }
 
             val localPurchases = shopCreditPurchaseDao.getAllPurchasesList(userId)
-            val rPIds = remotePurchases.map { it.id }.toSet()
+            val rPIds = remotePurchasesMap.keys
             for (p in localPurchases) {
                 if (!rPIds.contains(p.id)) {
                     saveShopCreditPurchase(userId, p)
@@ -1960,36 +2667,17 @@ class FirestoreRepositoryImpl(
                 }
             }
 
-            // Payments
-            val payColl = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_SHOP_CREDIT_PAYMENTS)
-            val paySnap = try { payColl.get().awaitTask(5000L) } catch (e: Exception) { null }
-            val remotePayments = paySnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val vendorId = doc.getLong("vendorId") ?: return@mapNotNull null
-                val accountId = doc.getLong("accountId") ?: 1L
-                val amount = doc.getDouble("amount") ?: 0.0
-                val dateTimestamp = doc.getLong("dateTimestamp") ?: System.currentTimeMillis()
-                val note = doc.getString("note") ?: ""
-                val transactionId = doc.getLong("transactionId")
-                ShopCreditPayment(
-                    id = id,
-                    userId = userId,
-                    vendorId = vendorId,
-                    accountId = accountId,
-                    amount = amount,
-                    dateTimestamp = dateTimestamp,
-                    note = note,
-                    transactionId = transactionId
-                )
-            } ?: emptyList()
-
-            if (remotePayments.isNotEmpty()) {
-                shopCreditPaymentDao.insertPayments(remotePayments)
-                count += remotePayments.size
+            for (pay in remotePaymentsMap.values) {
+                try {
+                    shopCreditPaymentDao.insertPayment(pay)
+                    count++
+                } catch (e: Exception) {
+                    Log.w(TAG, "syncShopCredit insert payment ${pay.id} error: ${e.message}")
+                }
             }
 
             val localPayments = shopCreditPaymentDao.getAllPaymentsList(userId)
-            val rPayIds = remotePayments.map { it.id }.toSet()
+            val rPayIds = remotePaymentsMap.keys
             for (p in localPayments) {
                 if (!rPayIds.contains(p.id)) {
                     saveShopCreditPayment(userId, p)
@@ -2002,49 +2690,63 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncRecurringRules(userId: String, firestore: FirebaseFirestore): Int {
+    private suspend fun syncRecurringRules(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore): Int {
         var count = 0
         try {
-            val collection = firestore.collection(COLLECTION_USERS).document(userId).collection(COLLECTION_RECURRING_RULES)
-            val remoteSnap = try { collection.get().awaitTask(5000L) } catch (e: Exception) { null }
+            val remoteRulesMap = linkedMapOf<Long, RecurringRule>()
+            for (candId in candidateIds) {
+                val collection = firestore.collection(COLLECTION_USERS).document(candId).collection(COLLECTION_RECURRING_RULES)
+                val remoteSnap = try { collection.get().awaitTask(6000L) } catch (e: Exception) { null }
+                if (remoteSnap != null) {
+                    for (doc in remoteSnap.documents) {
+                        val id = doc.safeLong("id") ?: doc.id.toLongOrNull() ?: continue
+                        val accountId = doc.safeLong("accountId") ?: 1L
+                        val categoryId = doc.safeLong("categoryId")
+                        val amount = doc.safeDouble("amount") ?: 0.0
+                        val typeStr = doc.safeString("type") ?: TransactionType.EXPENSE.name
+                        val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
+                        val freqStr = doc.safeString("frequency") ?: Frequency.MONTHLY.name
+                        val frequency = try { Frequency.valueOf(freqStr) } catch (e: Exception) { Frequency.MONTHLY }
+                        val startDate = doc.safeLong("startDate") ?: System.currentTimeMillis()
+                        val endDate = doc.safeLong("endDate")
+                        val lastGeneratedDate = doc.safeLong("lastGeneratedDate") ?: 0L
+                        val isPaused = doc.safeBoolean("isPaused") ?: false
+                        val note = doc.safeString("note") ?: ""
+                        if (!remoteRulesMap.containsKey(id)) {
+                            remoteRulesMap[id] = RecurringRule(
+                                id = id,
+                                userId = userId,
+                                accountId = accountId,
+                                categoryId = categoryId,
+                                amount = amount,
+                                type = type,
+                                frequency = frequency,
+                                startDate = startDate,
+                                endDate = endDate,
+                                lastGeneratedDate = lastGeneratedDate,
+                                isPaused = isPaused,
+                                note = note
+                            )
+                        }
+                    }
+                }
+            }
 
-            val remoteRules = remoteSnap?.documents?.mapNotNull { doc ->
-                val id = doc.getLong("id") ?: doc.id.toLongOrNull() ?: return@mapNotNull null
-                val accountId = doc.getLong("accountId") ?: 1L
-                val categoryId = doc.getLong("categoryId")
-                val amount = doc.getDouble("amount") ?: 0.0
-                val typeStr = doc.getString("type") ?: TransactionType.EXPENSE.name
-                val type = try { TransactionType.valueOf(typeStr) } catch (e: Exception) { TransactionType.EXPENSE }
-                val freqStr = doc.getString("frequency") ?: Frequency.MONTHLY.name
-                val frequency = try { Frequency.valueOf(freqStr) } catch (e: Exception) { Frequency.MONTHLY }
-                val startDate = doc.getLong("startDate") ?: System.currentTimeMillis()
-                val endDate = doc.getLong("endDate")
-                val lastGeneratedDate = doc.getLong("lastGeneratedDate") ?: 0L
-                val isPaused = doc.getBoolean("isPaused") ?: false
-                val note = doc.getString("note") ?: ""
-                RecurringRule(
-                    id = id,
-                    userId = userId,
-                    accountId = accountId,
-                    categoryId = categoryId,
-                    amount = amount,
-                    type = type,
-                    frequency = frequency,
-                    startDate = startDate,
-                    endDate = endDate,
-                    lastGeneratedDate = lastGeneratedDate,
-                    isPaused = isPaused,
-                    note = note
-                )
-            } ?: emptyList()
-
-            if (remoteRules.isNotEmpty()) {
-                recurringDao.insertRules(remoteRules)
-                count += remoteRules.size
+            if (remoteRulesMap.isNotEmpty()) {
+                val reqAccounts = remoteRulesMap.values.map { it.accountId }.toSet()
+                ensureLocalUserAndForeignKeys(userId = userId, requiredAccountIds = reqAccounts)
+                for (r in remoteRulesMap.values) {
+                    try {
+                        recurringDao.insertRule(r)
+                        count++
+                    } catch (e: Exception) {
+                        Log.w(TAG, "syncRecurringRules insert ${r.id} error: ${e.message}")
+                    }
+                }
             }
 
             val localRules = recurringDao.getAllRulesList(userId)
-            val remoteIds = remoteRules.map { it.id }.toSet()
+            val remoteIds = remoteRulesMap.keys
             for (r in localRules) {
                 if (!remoteIds.contains(r.id)) {
                     saveRecurringRule(userId, r)
@@ -2057,31 +2759,38 @@ class FirestoreRepositoryImpl(
         return count
     }
 
-    private suspend fun syncUserSettings(userId: String, firestore: FirebaseFirestore) {
+    private suspend fun syncUserSettings(userId: String, candidateIds: List<String>, firestore: FirebaseFirestore) {
         try {
-            val settingsDoc = try {
-                firestore.collection(COLLECTION_USERS)
-                    .document(userId)
-                    .collection(COLLECTION_SETTINGS)
-                    .document(DOC_PREFERENCES)
-                    .get()
-                    .awaitTask(4000L)
-            } catch (e: Exception) {
-                null
+            var settingsDoc: DocumentSnapshot? = null
+            for (candId in candidateIds) {
+                val doc = try {
+                    firestore.collection(COLLECTION_USERS)
+                        .document(candId)
+                        .collection(COLLECTION_SETTINGS)
+                        .document(DOC_PREFERENCES)
+                        .get()
+                        .awaitTask(5000L)
+                } catch (e: Exception) {
+                    null
+                }
+                if (doc != null && doc.exists()) {
+                    settingsDoc = doc
+                    break
+                }
             }
 
             val local = settingsDao.getSettingsDirect(userId)
             if (settingsDoc != null && settingsDoc.exists()) {
-                val lang = settingsDoc.getString("language") ?: local?.language ?: "bn"
-                val numeral = settingsDoc.getString("numeralSystem") ?: local?.numeralSystem ?: "bn"
-                val currency = settingsDoc.getString("defaultCurrency") ?: local?.defaultCurrency ?: "BDT"
-                val symbol = settingsDoc.getString("currencySymbol") ?: local?.currencySymbol ?: "৳"
-                val hideBal = settingsDoc.getBoolean("hideBalances") ?: local?.hideBalances ?: false
-                val pinEn = settingsDoc.getBoolean("pinEnabled") ?: local?.pinEnabled ?: false
-                val pin = settingsDoc.getString("pinCode") ?: local?.pinCode ?: ""
-                val dailyReminder = settingsDoc.getBoolean("dailyReminderEnabled") ?: local?.dailyReminderEnabled ?: true
-                val dark = settingsDoc.getBoolean("isDarkMode") ?: local?.isDarkMode ?: false
-                val systemTheme = settingsDoc.getBoolean("useSystemTheme") ?: local?.useSystemTheme ?: true
+                val lang = settingsDoc.safeString("language") ?: local?.language ?: "bn"
+                val numeral = settingsDoc.safeString("numeralSystem") ?: local?.numeralSystem ?: "bn"
+                val currency = settingsDoc.safeString("defaultCurrency") ?: local?.defaultCurrency ?: "BDT"
+                val symbol = settingsDoc.safeString("currencySymbol") ?: local?.currencySymbol ?: "৳"
+                val hideBal = settingsDoc.safeBoolean("hideBalances") ?: local?.hideBalances ?: false
+                val pinEn = settingsDoc.safeBoolean("pinEnabled") ?: local?.pinEnabled ?: false
+                val pin = settingsDoc.safeString("pinCode") ?: local?.pinCode ?: ""
+                val dailyReminder = settingsDoc.safeBoolean("dailyReminderEnabled") ?: local?.dailyReminderEnabled ?: true
+                val dark = settingsDoc.safeBoolean("isDarkMode") ?: local?.isDarkMode ?: false
+                val systemTheme = settingsDoc.safeBoolean("useSystemTheme") ?: local?.useSystemTheme ?: true
 
                 val updatedSettings = UserSettings(
                     userId = userId,

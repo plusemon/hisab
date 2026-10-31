@@ -292,7 +292,20 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
         val callback = object : android.net.ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: android.net.Network) {
+                val wasConnected = _isNetworkConnected.value
                 _isNetworkConnected.value = true
+                if (!wasConnected) {
+                    currentUser.value?.id?.let { uid ->
+                        viewModelScope.launch {
+                            val txCount = withContext(Dispatchers.IO) { db.transactionDao().getAllTransactionsList(uid).size }
+                            if (txCount == 0 && _restoreUiState.value is RestoreUiState.Idle) {
+                                checkAndTriggerCloudRestoreOrSeed(uid)
+                            } else {
+                                syncWithFirestore(uid)
+                            }
+                        }
+                    }
+                }
             }
 
             override fun onLost(network: android.net.Network) {
@@ -317,9 +330,11 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             _appSyncStatus.value = AppSyncStatus.Syncing
             try {
-                kotlinx.coroutines.withTimeout(10000L) {
+                kotlinx.coroutines.withTimeout(25000L) {
                     firestoreRepository.syncAllWithRoom(userId)
                 }
+                authRepository.ensureUserDataSeeded(userId, syncToCloudIfSeeded = false)
+                refreshMonthlyData(userId)
             } catch (e: Exception) {
                 android.util.Log.w("HisabViewModel", "Background sync with Firestore finished: ${e.message}")
             } finally {
@@ -334,9 +349,11 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
             _appSyncStatus.value = AppSyncStatus.Syncing
             _snackbarMessage.emit(if (_settings.value.language == "bn") "ক্লাউড সিঙ্ক শুরু হচ্ছে..." else "Starting cloud sync...")
             try {
-                val result = kotlinx.coroutines.withTimeout(12000L) {
+                val result = kotlinx.coroutines.withTimeout(30000L) {
                     firestoreRepository.syncAllWithRoom(user.id)
                 }
+                authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
+                refreshMonthlyData(user.id)
                 if (result.isSuccess) {
                     val count = result.getOrNull() ?: 0
                     _snackbarMessage.emit(
@@ -368,11 +385,16 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
     private fun checkAndTriggerCloudRestoreOrSeed(userId: String) {
         viewModelScope.launch {
-            val localAccCount = withContext(Dispatchers.IO) { db.accountDao().getAccountCount(userId) }
+            val localAccounts = withContext(Dispatchers.IO) { db.accountDao().getAllAccountsList(userId) }
             val localTxCount = withContext(Dispatchers.IO) { db.transactionDao().getAllTransactionsList(userId).size }
+            val localDebtCount = withContext(Dispatchers.IO) { db.loanDebtDao().getAllDebtsList(userId).size }
+            val localPurchaseCount = withContext(Dispatchers.IO) { db.shopCreditPurchaseDao().getAllPurchasesList(userId).size }
 
-            if (localAccCount == 0 && localTxCount == 0) {
-                // If local database has no data (e.g. app data was cleared or first login on device)
+            val hasOnlyZeroBalanceAccounts = localAccounts.isEmpty() || localAccounts.all { it.startingBalance == 0.0 }
+            val isLocalDataEmpty = localTxCount == 0 && localDebtCount == 0 && localPurchaseCount == 0 && hasOnlyZeroBalanceAccounts
+
+            if (isLocalDataEmpty) {
+                // Local database has no transactions/debts/purchases and no non-zero starting balances
                 val checkResult = firestoreRepository.checkHasCloudData(userId)
                 if (checkResult.isSuccess) {
                     val hasCloud = checkResult.getOrDefault(false)
@@ -381,12 +403,15 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                         triggerRestoreFromCloud(userId, isManual = false)
                     } else {
                         // Truly brand new user confirmed with no existing cloud records:
-                        authRepository.ensureUserDataSeeded(userId)
+                        authRepository.ensureUserDataSeeded(userId, syncToCloudIfSeeded = true)
                         hisabRepository.processRecurringTransactions(userId)
                     }
                 } else {
-                    // Cloud check failed (e.g. offline or network error). DO NOT seed default data, as it would overwrite/reset cloud records.
-                    android.util.Log.w("HisabViewModel", "checkHasCloudData failed due to network/offline. Skipping auto-seed to protect cloud backup.")
+                    // Cloud check failed (e.g. offline or network error).
+                    // Seed local-only default accounts/categories (syncToCloudIfSeeded = false) so UI isn't blank,
+                    // while protecting cloud backup from being overwritten!
+                    android.util.Log.w("HisabViewModel", "checkHasCloudData failed due to network/offline. Seeding local-only defaults without cloud upload.")
+                    authRepository.ensureUserDataSeeded(userId, syncToCloudIfSeeded = false)
                     _snackbarMessage.emit(
                         if (_settings.value.language == "bn")
                             "ইন্টারনেট সংযোগ নেই। অনলাইন হলে ডাটা সিঙ্ক হবে।"
@@ -396,6 +421,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } else {
                 // Normal app start with existing local records:
+                authRepository.ensureUserDataSeeded(userId, syncToCloudIfSeeded = false)
                 hisabRepository.processRecurringTransactions(userId)
                 syncWithFirestore(userId)
             }
@@ -416,6 +442,8 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 if (result.isSuccess) {
                     val summary = result.getOrNull() ?: CloudRestoreSummary()
+                    // Ensure at least local accounts/categories exist after restore
+                    authRepository.ensureUserDataSeeded(uid, syncToCloudIfSeeded = false)
                     if (summary.totalRecords > 0 || summary.hasCloudData || summary.settingsRestored) {
                         _restoreUiState.value = RestoreUiState.Completed(summary)
                         refreshMonthlyData(uid)
@@ -426,18 +454,18 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     } else {
                         // In auto-mode with verified empty cloud: seed starter accounts
-                        authRepository.ensureUserDataSeeded(uid)
+                        authRepository.ensureUserDataSeeded(uid, syncToCloudIfSeeded = true)
                         _restoreUiState.value = RestoreUiState.Idle
                     }
                 } else {
                     val errorMsg = result.exceptionOrNull()?.localizedMessage ?: "Unknown error"
+                    authRepository.ensureUserDataSeeded(uid, syncToCloudIfSeeded = false)
                     if (isManual) {
                         _restoreUiState.value = RestoreUiState.Error(
                             if (isBn) "ক্লাউড রিস্টোর সম্পন্ন করা যায়নি: $errorMsg" else "Cloud restore failed: $errorMsg"
                         )
                     } else {
-                        // DO NOT seed default data on failure! Protects user data from being reset when offline.
-                        android.util.Log.w("HisabViewModel", "Automatic restore failed: $errorMsg. Not seeding default data.")
+                        android.util.Log.w("HisabViewModel", "Automatic restore failed: $errorMsg. Seeded local-only defaults.")
                         _restoreUiState.value = RestoreUiState.Idle
                         _snackbarMessage.emit(
                             if (isBn) "ক্লাউড থেকে ডাটা নামানো যায়নি (অফলাইন মোড)" else "Could not download cloud data (offline mode)"
@@ -445,12 +473,13 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
             } catch (e: Exception) {
+                authRepository.ensureUserDataSeeded(uid, syncToCloudIfSeeded = false)
                 if (isManual) {
                     _restoreUiState.value = RestoreUiState.Error(
                         e.localizedMessage ?: "Restoration failed"
                     )
                 } else {
-                    android.util.Log.w("HisabViewModel", "Automatic restoration exception: ${e.message}. Not seeding default data.")
+                    android.util.Log.w("HisabViewModel", "Automatic restoration exception: ${e.message}.")
                     _restoreUiState.value = RestoreUiState.Idle
                 }
             }
@@ -460,7 +489,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun ensureDefaultData() {
         val user = currentUser.value ?: return
         viewModelScope.launch {
-            authRepository.ensureUserDataSeeded(user.id)
+            authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
         }
     }
 
@@ -2056,6 +2085,8 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
             hisabRepository.clearAllData(user.id)
+            authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
+            refreshMonthlyData(user.id)
             _snackbarMessage.emit("সব হিসাব মুছে ফেলা হয়েছে")
         }
     }

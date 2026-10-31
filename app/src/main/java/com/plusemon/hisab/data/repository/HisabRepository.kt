@@ -602,15 +602,16 @@ class HisabRepository(
     }
 
     suspend fun clearAllData(userId: String) = withContext(Dispatchers.IO) {
+        shopCreditPaymentDao.deleteAllPaymentsForUser(userId)
+        shopCreditPurchaseDao.deleteAllPurchasesForUser(userId)
+        loanRepaymentDao.deleteAllRepaymentsForUser(userId)
+        loanDebtDao.deleteAllDebtsForUser(userId)
         transactionDao.deleteAllTransactionsForUser(userId)
+        recurringDao.deleteAllRulesForUser(userId)
         budgetDao.deleteAllBudgetsForUser(userId)
         savingsGoalDao.deleteAllGoalsForUser(userId)
         contactDao.deleteAllContactsForUser(userId)
-        loanDebtDao.deleteAllDebtsForUser(userId)
-        loanRepaymentDao.deleteAllRepaymentsForUser(userId)
         vendorDao.deleteAllVendorsForUser(userId)
-        shopCreditPurchaseDao.deleteAllPurchasesForUser(userId)
-        shopCreditPaymentDao.deleteAllPaymentsForUser(userId)
-        recurringDao.deleteAllRulesForUser(userId)
+        accountDao.deleteAllAccountsForUser(userId)
     }
 }

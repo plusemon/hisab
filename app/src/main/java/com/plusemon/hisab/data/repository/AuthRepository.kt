@@ -153,6 +153,7 @@ class AuthRepository(
     ): AuthResult = withContext(Dispatchers.IO) {
         try {
             var user = userDao.getUserByEmail(email)
+                ?: userDao.getAllUsersDirect().firstOrNull { it.email.equals(email, ignoreCase = true) }
             val userId = user?.id ?: uid ?: UUID.randomUUID().toString()
 
             if (user == null) {
@@ -211,6 +212,7 @@ class AuthRepository(
             return@withContext AuthResult.Error("Please fill in both email and password")
         }
         val user = userDao.getUserByEmail(trimmedEmail)
+            ?: userDao.getAllUsersDirect().firstOrNull { it.email.equals(trimmedEmail, ignoreCase = true) }
             ?: return@withContext AuthResult.Error("No account found with this email. Please create an account.")
 
         if (user.isGoogleUser && user.passwordHash == null) {
@@ -240,6 +242,7 @@ class AuthRepository(
         }
 
         val existing = userDao.getUserByEmail(trimmedEmail)
+            ?: userDao.getAllUsersDirect().firstOrNull { it.email.equals(trimmedEmail, ignoreCase = true) }
         if (existing != null) {
             return@withContext AuthResult.Error("An account with this email already exists. Please Sign In.")
         }
@@ -258,13 +261,32 @@ class AuthRepository(
         AuthResult.Success(user)
     }
 
-    suspend fun ensureUserDataSeeded(userId: String) = withContext(Dispatchers.IO) {
+    suspend fun ensureUserDataSeeded(userId: String, syncToCloudIfSeeded: Boolean = false) = withContext(Dispatchers.IO) {
+        // Ensure local User row exists so ForeignKeys on accounts/categories/settings never fail
+        if (userDao.getUserDirect(userId) == null) {
+            val savedEmail = prefs.getString("current_user_email", null) ?: "$userId@hisab.local"
+            val savedName = prefs.getString("current_user_name", null) ?: "User"
+            val savedPhoto = prefs.getString("current_user_photo", null)
+            val savedIsGoogle = prefs.getBoolean("current_user_is_google", true)
+            userDao.insertUser(
+                User(
+                    id = userId,
+                    email = savedEmail,
+                    displayName = savedName,
+                    photoUrl = savedPhoto,
+                    isGoogleUser = savedIsGoogle
+                )
+            )
+        }
+
         val accCount = accountDao.getAccountCount(userId)
         if (accCount == 0) {
-            // Genuinely brand new user with no existing cloud or local records:
+            val totalUsers = userDao.getAllUsersDirect().size
+            val useFixedIds = totalUsers <= 1
             // 1. Seed Accounts
             val defaultAccounts = listOf(
                 UserAccount(
+                    id = if (useFixedIds) 1L else 0L,
                     userId = userId,
                     name = "Cash",
                     type = AccountType.CASH,
@@ -274,6 +296,7 @@ class AuthRepository(
                     iconName = "payments"
                 ),
                 UserAccount(
+                    id = if (useFixedIds) 2L else 0L,
                     userId = userId,
                     name = "bKash",
                     type = AccountType.MOBILE_WALLET,
@@ -283,6 +306,7 @@ class AuthRepository(
                     iconName = "account_balance_wallet"
                 ),
                 UserAccount(
+                    id = if (useFixedIds) 3L else 0L,
                     userId = userId,
                     name = "Nagad",
                     type = AccountType.MOBILE_WALLET,
@@ -292,6 +316,7 @@ class AuthRepository(
                     iconName = "account_balance_wallet"
                 ),
                 UserAccount(
+                    id = if (useFixedIds) 4L else 0L,
                     userId = userId,
                     name = "Bank Account",
                     type = AccountType.BANK,
@@ -301,13 +326,18 @@ class AuthRepository(
                     iconName = "account_balance"
                 )
             )
-            accountDao.insertAccounts(defaultAccounts)
+            try {
+                accountDao.insertAccounts(defaultAccounts)
+            } catch (e: Exception) {
+                accountDao.insertAccounts(defaultAccounts.map { it.copy(id = 0L) })
+            }
 
-            // Upload starter accounts to cloud
-            firestoreRepository?.let { repo ->
-                val insertedAccounts = accountDao.getAllAccountsList(userId)
-                for (acc in insertedAccounts) {
-                    try { repo.saveAccount(userId, acc) } catch (e: Exception) {}
+            if (syncToCloudIfSeeded) {
+                firestoreRepository?.let { repo ->
+                    val insertedAccounts = accountDao.getAllAccountsList(userId)
+                    for (acc in insertedAccounts) {
+                        try { repo.saveAccount(userId, acc) } catch (e: Exception) {}
+                    }
                 }
             }
         }
@@ -342,11 +372,12 @@ class AuthRepository(
             )
             categoryDao.insertCategories(defaultCategories)
 
-            // Upload starter categories to cloud
-            firestoreRepository?.let { repo ->
-                val insertedCats = categoryDao.getAllCategoriesList(userId)
-                for (cat in insertedCats) {
-                    try { repo.saveCategory(userId, cat) } catch (e: Exception) {}
+            if (syncToCloudIfSeeded) {
+                firestoreRepository?.let { repo ->
+                    val insertedCats = categoryDao.getAllCategoriesList(userId)
+                    for (cat in insertedCats) {
+                        try { repo.saveCategory(userId, cat) } catch (e: Exception) {}
+                    }
                 }
             }
         }
@@ -367,9 +398,10 @@ class AuthRepository(
             )
             settingsDao.insertOrUpdate(settings)
 
-            // Upload starter settings to cloud
-            firestoreRepository?.let { repo ->
-                try { repo.saveUserSettings(userId, settings) } catch (e: Exception) {}
+            if (syncToCloudIfSeeded) {
+                firestoreRepository?.let { repo ->
+                    try { repo.saveUserSettings(userId, settings) } catch (e: Exception) {}
+                }
             }
         }
     }
