@@ -4115,31 +4115,12 @@ fun AddShopCreditBottomSheet(
         )
     }
 
-    val inputFieldColors = OutlinedTextFieldDefaults.colors(
-        focusedContainerColor = Color(0xFF161F30),
-        unfocusedContainerColor = Color(0xFF161F30),
-        disabledContainerColor = Color(0xFF161F30),
-        focusedBorderColor = MaterialTheme.colorScheme.primary,
-        unfocusedBorderColor = Color(0xFF2A374E),
-        focusedTextColor = Color(0xFFF8FAFC),
-        unfocusedTextColor = Color(0xFFF8FAFC),
-        focusedLabelColor = MaterialTheme.colorScheme.primary,
-        unfocusedLabelColor = Color(0xFF94A3B8),
-        focusedPlaceholderColor = Color(0xFF64748B),
-        unfocusedPlaceholderColor = Color(0xFF64748B),
-        focusedLeadingIconColor = MaterialTheme.colorScheme.primary,
-        unfocusedLeadingIconColor = Color(0xFF94A3B8),
-        focusedTrailingIconColor = MaterialTheme.colorScheme.primary,
-        unfocusedTrailingIconColor = Color(0xFF94A3B8),
-        cursorColor = MaterialTheme.colorScheme.primary
-    )
-
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
         dragHandle = { BottomSheetDefaults.DragHandle() },
         shape = RoundedCornerShape(topStart = 24.dp, topEnd = 24.dp),
-        containerColor = Color(0xFF101726),
+        containerColor = MaterialTheme.colorScheme.surface,
         modifier = Modifier.imePadding()
     ) {
         Column(
@@ -4219,7 +4200,7 @@ fun AddShopCreditBottomSheet(
                 val vendor = selectedVendor!!
                 Surface(
                     shape = RoundedCornerShape(12.dp),
-                    color = Color(0xFF161F30),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
                     border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.6f)),
                     modifier = Modifier.fillMaxWidth()
                 ) {
@@ -4233,7 +4214,7 @@ fun AddShopCreditBottomSheet(
                             modifier = Modifier
                                 .size(36.dp)
                                 .clip(RoundedCornerShape(8.dp))
-                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.2f)),
+                                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
@@ -4249,7 +4230,7 @@ fun AddShopCreditBottomSheet(
                                 text = vendor.name,
                                 style = MaterialTheme.typography.titleSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = Color(0xFFF8FAFC)
+                                color = MaterialTheme.colorScheme.onSurface
                             )
                             if (vendor.categoryTag.isNotBlank() || vendor.phone.isNotBlank()) {
                                 Text(
@@ -4258,7 +4239,7 @@ fun AddShopCreditBottomSheet(
                                         vendor.phone.ifBlank { null }
                                     ).joinToString(" • "),
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = Color(0xFF94A3B8)
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -4277,7 +4258,7 @@ fun AddShopCreditBottomSheet(
                                 Icons.Default.Close,
                                 contentDescription = "Clear",
                                 modifier = Modifier.size(16.dp),
-                                tint = Color(0xFF94A3B8)
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -4302,7 +4283,7 @@ fun AddShopCreditBottomSheet(
                             Icon(
                                 Icons.Default.Search,
                                 contentDescription = null,
-                                tint = Color(0xFF94A3B8)
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         },
                         trailingIcon = {
@@ -4312,7 +4293,7 @@ fun AddShopCreditBottomSheet(
                                         Icons.Default.Close,
                                         contentDescription = "Clear",
                                         modifier = Modifier.size(18.dp),
-                                        tint = Color(0xFF94A3B8)
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             } else {
@@ -4320,7 +4301,7 @@ fun AddShopCreditBottomSheet(
                                     Icon(
                                         imageVector = if (dropdownExpanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
                                         contentDescription = "Dropdown",
-                                        tint = Color(0xFF94A3B8)
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant
                                     )
                                 }
                             }
@@ -4328,7 +4309,6 @@ fun AddShopCreditBottomSheet(
                         singleLine = true,
                         maxLines = 1,
                         shape = RoundedCornerShape(12.dp),
-                        colors = inputFieldColors,
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp)
@@ -4342,20 +4322,18 @@ fun AddShopCreditBottomSheet(
                     DropdownMenu(
                         expanded = dropdownExpanded && selectedVendor == null,
                         onDismissRequest = { dropdownExpanded = false },
-                        modifier = Modifier
-                            .fillMaxWidth(0.9f)
-                            .background(Color(0xFF161F30))
+                        modifier = Modifier.fillMaxWidth(0.9f)
                     ) {
                         filteredVendors.take(5).forEach { v ->
                             DropdownMenuItem(
                                 text = {
                                     Column {
-                                        Text(v.name, fontWeight = FontWeight.SemiBold, color = Color(0xFFF8FAFC))
+                                        Text(v.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
                                         if (v.phone.isNotBlank() || v.categoryTag.isNotBlank()) {
                                             Text(
                                                 "${v.categoryTag} ${if (v.phone.isNotBlank()) "• ${v.phone}" else ""}",
                                                 style = MaterialTheme.typography.labelSmall,
-                                                color = Color(0xFF94A3B8)
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant
                                             )
                                         }
                                     }
@@ -4375,7 +4353,7 @@ fun AddShopCreditBottomSheet(
                         }
 
                         if (filteredVendors.isNotEmpty()) {
-                            HorizontalDivider(color = Color(0xFF2A374E))
+                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
                         }
 
                         // Pinned "+ Add New Shop" action with syntax typo fixed (+ Add New Shop)
@@ -4450,19 +4428,17 @@ fun AddShopCreditBottomSheet(
                     Text(
                         text = if (isBangla) "নম্বর বা নাম দিয়ে কন্টাক্ট খুঁজুন..." else "Search contact by number or name...",
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color(0xFF64748B)
+                        overflow = TextOverflow.Ellipsis
                     )
                 },
                 isPhoneField = true,
                 isBangla = isBangla,
                 selectedPhotoUri = selectedContactPhotoUri,
                 defaultLeadingIcon = Icons.Default.Phone,
-                leadingIconTint = Color(0xFF94A3B8),
+                leadingIconTint = MaterialTheme.colorScheme.onSurfaceVariant,
                 onPickExternalContact = onPickContactClick,
                 externalPickButtonTestTag = "shop_credit_pick_phone_btn",
                 fieldTestTag = "shop_credit_phone_input",
-                colors = inputFieldColors,
                 onContactSelected = { suggestion ->
                     applyShopContactSelection(suggestion.name, suggestion.phones, suggestion.photoUri)
                 }
@@ -4490,7 +4466,6 @@ fun AddShopCreditBottomSheet(
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Decimal),
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
-                colors = inputFieldColors,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 56.dp)
@@ -4513,13 +4488,11 @@ fun AddShopCreditBottomSheet(
                     Text(
                         text = if (isBangla) "যেমন: চাল, ডাল, তেল" else "e.g. Rice, oil, milk",
                         maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                        color = Color(0xFF64748B)
+                        overflow = TextOverflow.Ellipsis
                     )
                 },
                 singleLine = true,
                 shape = RoundedCornerShape(12.dp),
-                colors = inputFieldColors,
                 modifier = Modifier
                     .fillMaxWidth()
                     .heightIn(min = 56.dp)
@@ -4538,10 +4511,10 @@ fun AddShopCreditBottomSheet(
                 OutlinedButton(
                     onClick = onDismiss,
                     shape = RoundedCornerShape(12.dp),
-                    border = BorderStroke(1.dp, Color(0xFF334155)),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                     colors = ButtonDefaults.outlinedButtonColors(
                         containerColor = Color.Transparent,
-                        contentColor = Color(0xFF94A3B8)
+                        contentColor = MaterialTheme.colorScheme.onSurfaceVariant
                     ),
                     modifier = Modifier
                         .weight(1f)
@@ -4576,9 +4549,9 @@ fun AddShopCreditBottomSheet(
                     shape = RoundedCornerShape(12.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = MaterialTheme.colorScheme.primary,
-                        contentColor = Color.White,
-                        disabledContainerColor = Color(0xFF1E293B),
-                        disabledContentColor = Color(0xFF94A3B8)
+                        contentColor = MaterialTheme.colorScheme.onPrimary,
+                        disabledContainerColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+                        disabledContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.38f)
                     ),
                     modifier = Modifier
                         .weight(1f)
@@ -4588,7 +4561,6 @@ fun AddShopCreditBottomSheet(
                     Text(
                         text = Localization.getString(Localization.Key.SAVE, isBangla),
                         fontWeight = FontWeight.Bold,
-                        color = Color.White,
                         fontSize = 15.sp
                     )
                 }
