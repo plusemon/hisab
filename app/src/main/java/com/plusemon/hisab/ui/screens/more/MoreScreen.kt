@@ -88,6 +88,7 @@ fun MoreScreen(
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    var showSignOutDialog by remember { mutableStateOf(false) }
 
     // PIN Setup Dialog
     if (showPinDialog) {
@@ -107,7 +108,9 @@ fun MoreScreen(
         DeleteConfirmationDialog(
             title = Localization.getString(Localization.Key.DELETE_ACCOUNT, isBn),
             message = Localization.getString(Localization.Key.DELETE_ACCOUNT_CONFIRM, isBn),
-            itemDetail = currentUser?.email ?: (if (isBn) "বর্তমান অ্যাকাউন্ট" else "Current Account"),
+            itemDetail = currentUser?.email ?: currentUser?.displayName ?: (if (isBn) "বর্তমান অ্যাকাউন্ট" else "Current Account"),
+            confirmButtonText = if (isBn) "অ্যাকাউন্ট ডিলিট" else "Delete Account",
+            cancelButtonText = if (isBn) "বাতিল" else "Cancel",
             isBangla = isBn,
             onConfirm = {
                 viewModel.deleteAccount()
@@ -115,6 +118,26 @@ fun MoreScreen(
             },
             onDismiss = {
                 showDeleteAccountDialog = false
+            }
+        )
+    }
+
+    // Sign Out Confirmation Dialog (prevents accidental session termination)
+    if (showSignOutDialog) {
+        DeleteConfirmationDialog(
+            title = Localization.getString(Localization.Key.SIGN_OUT, isBn),
+            message = Localization.getString(Localization.Key.SIGN_OUT_CONFIRM, isBn),
+            itemDetail = currentUser?.email ?: currentUser?.displayName ?: (if (isBn) "বর্তমান সেশন" else "Current Session"),
+            confirmButtonText = if (isBn) "সাইন আউট" else "Sign Out",
+            cancelButtonText = if (isBn) "বাতিল" else "Cancel",
+            icon = Icons.AutoMirrored.Filled.ExitToApp,
+            isBangla = isBn,
+            onConfirm = {
+                viewModel.signOut()
+                showSignOutDialog = false
+            },
+            onDismiss = {
+                showSignOutDialog = false
             }
         )
     }
@@ -481,7 +504,7 @@ fun MoreScreen(
                     titleColor = ExpenseRed,
                     iconBgColor = ExpenseRed.copy(alpha = 0.12f),
                     iconTint = ExpenseRed,
-                    onClick = { viewModel.signOut() },
+                    onClick = { showSignOutDialog = true },
                     testTag = "more_sign_out_tile"
                 )
             }

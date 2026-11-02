@@ -81,6 +81,7 @@ fun SettingsScreen(
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
+    var showSignOutDialog by remember { mutableStateOf(false) }
 
     // PIN Setup Dialog
     if (showPinDialog) {
@@ -101,6 +102,8 @@ fun SettingsScreen(
             title = Localization.getString(Localization.Key.DELETE_ACCOUNT, isBn),
             message = Localization.getString(Localization.Key.DELETE_ACCOUNT_CONFIRM, isBn),
             itemDetail = currentUser?.email ?: (if (isBn) "বর্তমান অ্যাকাউন্ট" else "Current Account"),
+            confirmButtonText = if (isBn) "অ্যাকাউন্ট ডিলিট" else "Delete Account",
+            cancelButtonText = if (isBn) "বাতিল" else "Cancel",
             isBangla = isBn,
             onConfirm = {
                 viewModel.deleteAccount()
@@ -108,6 +111,26 @@ fun SettingsScreen(
             },
             onDismiss = {
                 showDeleteAccountDialog = false
+            }
+        )
+    }
+
+    // Sign Out Confirmation Dialog
+    if (showSignOutDialog) {
+        DeleteConfirmationDialog(
+            title = Localization.getString(Localization.Key.SIGN_OUT, isBn),
+            message = Localization.getString(Localization.Key.SIGN_OUT_CONFIRM, isBn),
+            itemDetail = currentUser?.email ?: currentUser?.displayName ?: (if (isBn) "বর্তমান সেশন" else "Current Session"),
+            confirmButtonText = if (isBn) "সাইন আউট" else "Sign Out",
+            cancelButtonText = if (isBn) "বাতিল" else "Cancel",
+            icon = Icons.AutoMirrored.Filled.ExitToApp,
+            isBangla = isBn,
+            onConfirm = {
+                viewModel.signOut()
+                showSignOutDialog = false
+            },
+            onDismiss = {
+                showSignOutDialog = false
             }
         )
     }
@@ -294,7 +317,7 @@ fun SettingsScreen(
                         icon = Icons.AutoMirrored.Filled.ExitToApp,
                         title = Localization.getString(Localization.Key.SIGN_OUT, isBn),
                         titleColor = ExpenseRed,
-                        onClick = { viewModel.signOut() }
+                        onClick = { showSignOutDialog = true }
                     )
                 }
             }
