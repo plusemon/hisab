@@ -405,6 +405,22 @@ class HisabRepository(
         repId
     }
 
+    suspend fun deleteLoanRepayment(repaymentId: Long, loanId: Long, userId: String): LoanDebt? = withContext(Dispatchers.IO) {
+        val debt = loanDebtDao.getDebtById(loanId, userId) ?: return@withContext null
+        val repayments = loanRepaymentDao.getRepaymentsForLoanSync(loanId)
+        val rep = repayments.find { it.id == repaymentId } ?: return@withContext null
+
+        rep.transactionId?.let { txId ->
+            transactionDao.deleteTransactionById(txId, userId)
+        }
+        loanRepaymentDao.deleteRepayment(repaymentId)
+
+        val newPaid = (debt.paidAmount - rep.amount).coerceAtLeast(0.0)
+        val settled = newPaid >= debt.amount
+        loanDebtDao.recordRepayment(loanId, userId, newPaid, settled)
+        loanDebtDao.getDebtById(loanId, userId)
+    }
+
     suspend fun deleteLoanDebt(id: Long, userId: String) = withContext(Dispatchers.IO) {
         val debt = loanDebtDao.getDebtById(id, userId)
         if (debt != null) {

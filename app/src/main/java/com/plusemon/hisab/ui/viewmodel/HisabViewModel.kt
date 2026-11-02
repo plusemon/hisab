@@ -1680,6 +1680,27 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun deleteLoanRepayment(repayment: LoanRepayment) {
+        val user = currentUser.value ?: return
+        viewModelScope.launch {
+            markSaving()
+            val updatedDebt = hisabRepository.deleteLoanRepayment(repayment.id, repayment.loanId, user.id)
+            try {
+                firestoreRepository.deleteLoanRepayment(user.id, repayment.id)
+                repayment.transactionId?.let { txId ->
+                    firestoreRepository.deleteTransaction(user.id, txId)
+                }
+                if (updatedDebt != null) {
+                    firestoreRepository.saveLoanDebt(user.id, updatedDebt)
+                }
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Firestore delete repayment error: ${e.message}")
+            }
+            markSaved()
+            _snackbarMessage.emit("কিস্তির পেমেন্ট মুছে ফেলা হয়েছে")
+        }
+    }
+
     fun deleteLoanDebt(id: Long) {
         val user = currentUser.value ?: return
         viewModelScope.launch {
