@@ -128,7 +128,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun markSaved() {
         _appSyncStatus.value = AppSyncStatus.Saved()
         viewModelScope.launch {
-            kotlinx.coroutines.delay(2200)
+            kotlinx.coroutines.delay(800)
             if (_appSyncStatus.value is AppSyncStatus.Saved) {
                 _appSyncStatus.value = AppSyncStatus.Synced()
             }
@@ -1984,16 +1984,8 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         val user = currentUser.value
         val target = if (user != null) updated.copy(userId = user.id) else updated
         viewModelScope.launch {
-            markSaving()
+            // Keep UI preferences strictly local on this device without triggering cloud sync
             hisabRepository.updateSettings(target)
-            if (user != null) {
-                try {
-                    firestoreRepository.saveUserSettings(user.id, target)
-                } catch (e: Exception) {
-                    android.util.Log.w("HisabViewModel", "Firestore save user settings error: ${e.message}")
-                }
-            }
-            markSaved()
         }
     }
 

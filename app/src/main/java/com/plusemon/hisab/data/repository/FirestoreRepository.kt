@@ -29,7 +29,9 @@ import com.plusemon.hisab.data.model.UserAccount
 import com.plusemon.hisab.data.model.UserSettings
 import com.plusemon.hisab.data.model.Vendor
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.awaitClose
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -208,48 +210,36 @@ class FirestoreRepositoryImpl(
         val candidates = linkedSetOf<String>()
         if (userId.isNotBlank()) candidates.add(userId)
 
-        val authPrefs = context.getSharedPreferences("hisab_auth_prefs", Context.MODE_PRIVATE)
-        val prefUid = authPrefs.getString("current_user_id", null)
-        val prefEmail = authPrefs.getString("current_user_email", null)
-        if (!prefUid.isNullOrBlank()) candidates.add(prefUid)
-
-        val localUser = try { userDao.getUserDirect(userId) } catch (e: Exception) { null }
-        val emailSet = linkedSetOf<String>()
-        localUser?.email?.takeIf { it.isNotBlank() }?.let {
-            emailSet.add(it)
-            emailSet.add(it.lowercase())
-        }
-        prefEmail?.takeIf { it.isNotBlank() }?.let {
-            emailSet.add(it)
-            emailSet.add(it.lowercase())
-        }
-
         try {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
                 val fbUser = FirebaseAuth.getInstance().currentUser
                 fbUser?.uid?.takeIf { it.isNotBlank() }?.let { candidates.add(it) }
-                fbUser?.email?.takeIf { it.isNotBlank() }?.let {
-                    emailSet.add(it)
-                    emailSet.add(it.lowercase())
-                }
             }
-        } catch (e: Exception) {
-            // Ignore
-        }
+        } catch (_: Exception) {}
 
-        for (email in emailSet) {
-            candidates.add(email)
-            try {
-                val snap = firestore.collection(COLLECTION_USERS)
-                    .whereEqualTo("email", email)
-                    .get()
-                    .awaitTask(5000L)
-                for (doc in snap.documents) {
-                    if (doc.id.isNotBlank()) candidates.add(doc.id)
-                    doc.safeString("uid")?.takeIf { it.isNotBlank() }?.let { candidates.add(it) }
-                }
-            } catch (e: Exception) {
-                // Ignore if security rules restrict collection query
+        val authPrefs = context.getSharedPreferences("hisab_auth_prefs", Context.MODE_PRIVATE)
+        val prefUid = authPrefs.getString("current_user_id", null)
+        if (!prefUid.isNullOrBlank()) candidates.add(prefUid)
+
+        // Only search email fallback if no UID could be resolved
+        if (candidates.isEmpty()) {
+            val prefEmail = authPrefs.getString("current_user_email", null)
+            val localUser = try { userDao.getUserDirect(userId) } catch (e: Exception) { null }
+            val emailSet = linkedSetOf<String>()
+            localUser?.email?.takeIf { it.isNotBlank() }?.let { emailSet.add(it); emailSet.add(it.lowercase()) }
+            prefEmail?.takeIf { it.isNotBlank() }?.let { emailSet.add(it); emailSet.add(it.lowercase()) }
+
+            for (email in emailSet) {
+                try {
+                    val snap = firestore.collection(COLLECTION_USERS)
+                        .whereEqualTo("email", email)
+                        .get()
+                        .awaitTask(3000L)
+                    for (doc in snap.documents) {
+                        if (doc.id.isNotBlank()) candidates.add(doc.id)
+                        doc.safeString("uid")?.takeIf { it.isNotBlank() }?.let { candidates.add(it) }
+                    }
+                } catch (_: Exception) {}
             }
         }
 
@@ -1979,41 +1969,36 @@ class FirestoreRepositoryImpl(
             val candidateIds = resolveCandidateUserIds(userId, firestore)
             var syncedCount = 0
 
-            // 1. Sync Accounts
-            syncedCount += syncAccounts(userId, candidateIds, firestore)
+            // Phase 1 (Parent Dependencies in Parallel): Accounts, Categories, Vendors
+            coroutineScope {
+                val accDeferred = async { syncAccounts(userId, candidateIds, firestore) }
+                val catDeferred = async { syncCategories(userId, candidateIds, firestore) }
+                val venDeferred = async { syncVendors(userId, candidateIds, firestore) }
+                syncedCount += accDeferred.await() + catDeferred.await() + venDeferred.await()
+            }
 
-            // 2. Sync Categories
-            syncedCount += syncCategories(userId, candidateIds, firestore)
+            // Phase 2 (Dependent Tables in Parallel): Transactions, Budgets, Savings, Contacts, Debts, Repayments, Shop Credit, Recurring
+            coroutineScope {
+                val txDeferred = async { syncTransactions(userId, candidateIds, firestore) }
+                val budDeferred = async { syncBudgets(userId, candidateIds, firestore) }
+                val goalDeferred = async { syncSavingsGoals(userId, candidateIds, firestore) }
+                val conDeferred = async { syncContacts(userId, candidateIds, firestore) }
+                val debtDeferred = async { syncLoansDebts(userId, candidateIds, firestore) }
+                val repDeferred = async { syncLoanRepayments(userId, candidateIds, firestore) }
+                val shopDeferred = async { syncShopCredit(userId, candidateIds, firestore) }
+                val recDeferred = async { syncRecurringRules(userId, candidateIds, firestore) }
 
-            // 3. Sync Vendors (before Shop Credit Purchases/Payments)
-            syncedCount += syncVendors(userId, candidateIds, firestore)
+                syncedCount += txDeferred.await() +
+                        budDeferred.await() +
+                        goalDeferred.await() +
+                        conDeferred.await() +
+                        debtDeferred.await() +
+                        repDeferred.await() +
+                        shopDeferred.await() +
+                        recDeferred.await()
+            }
 
-            // 4. Sync Transactions (ensures referenced Account IDs exist first)
-            syncedCount += syncTransactions(userId, candidateIds, firestore)
-
-            // 5. Sync Budgets
-            syncedCount += syncBudgets(userId, candidateIds, firestore)
-
-            // 6. Sync Savings Goals
-            syncedCount += syncSavingsGoals(userId, candidateIds, firestore)
-
-            // 7. Sync Contacts
-            syncedCount += syncContacts(userId, candidateIds, firestore)
-
-            // 8. Sync Loans & Debts
-            syncedCount += syncLoansDebts(userId, candidateIds, firestore)
-
-            // 9. Sync Loan Repayments
-            syncedCount += syncLoanRepayments(userId, candidateIds, firestore)
-
-            // 10. Sync Shop Credit Purchases & Payments
-            syncedCount += syncShopCredit(userId, candidateIds, firestore)
-
-            // 11. Sync Recurring Rules
-            syncedCount += syncRecurringRules(userId, candidateIds, firestore)
-
-            // 12. Sync User Preferences / Settings
-            syncUserSettings(userId, candidateIds, firestore)
+            // Note: UI Settings (language, dark mode, numeral system) are device-local and strictly excluded from cloud sync
 
             Log.i(TAG, "syncAllWithRoom complete for $userId. Total items synchronized: $syncedCount")
             Result.success(syncedCount)
@@ -2227,10 +2212,37 @@ class FirestoreRepositoryImpl(
             }
 
             val localTransactions = transactionDao.getAllTransactionsList(userId)
-            for (localTx in localTransactions) {
-                if (!remoteMap.containsKey(localTx.id)) {
-                    saveTransaction(userId, localTx)
-                    count++
+            val missingLocal = localTransactions.filter { !remoteMap.containsKey(it.id) }
+            if (missingLocal.isNotEmpty()) {
+                missingLocal.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { localTx ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_TRANSACTIONS)
+                            .document(localTx.id.toString())
+                        val data = hashMapOf(
+                            "id" to localTx.id,
+                            "userId" to userId,
+                            "accountId" to localTx.accountId,
+                            "categoryId" to localTx.categoryId,
+                            "toAccountId" to localTx.toAccountId,
+                            "amount" to localTx.amount,
+                            "fee" to localTx.fee,
+                            "type" to localTx.type.name,
+                            "dateTimestamp" to localTx.dateTimestamp,
+                            "note" to localTx.note,
+                            "receiptUri" to localTx.receiptUri,
+                            "exchangeRate" to localTx.exchangeRate,
+                            "isRecurringInstance" to localTx.isRecurringInstance,
+                            "recurringRuleId" to localTx.recurringRuleId,
+                            "createdAt" to localTx.createdAt,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(10000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2276,10 +2288,27 @@ class FirestoreRepositoryImpl(
 
             val localBudgets = budgetDao.getAllBudgetsList(userId)
             val remoteIds = remoteBudgetsMap.keys
-            for (b in localBudgets) {
-                if (!remoteIds.contains(b.id)) {
-                    saveBudget(userId, b)
-                    count++
+            val missingBudgets = localBudgets.filter { !remoteIds.contains(it.id) }
+            if (missingBudgets.isNotEmpty()) {
+                missingBudgets.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { b ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_BUDGETS)
+                            .document(b.id.toString())
+                        val data = hashMapOf(
+                            "id" to b.id,
+                            "userId" to userId,
+                            "categoryId" to b.categoryId,
+                            "monthYear" to b.monthYear,
+                            "limitAmount" to b.limitAmount,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2337,10 +2366,33 @@ class FirestoreRepositoryImpl(
 
             val localGoals = savingsGoalDao.getAllGoalsList(userId)
             val remoteIds = remoteGoalsMap.keys
-            for (g in localGoals) {
-                if (!remoteIds.contains(g.id)) {
-                    saveSavingsGoal(userId, g)
-                    count++
+            val missingGoals = localGoals.filter { !remoteIds.contains(it.id) }
+            if (missingGoals.isNotEmpty()) {
+                missingGoals.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { g ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_SAVINGS_GOALS)
+                            .document(g.id.toString())
+                        val data = hashMapOf(
+                            "id" to g.id,
+                            "userId" to userId,
+                            "name" to g.name,
+                            "targetAmount" to g.targetAmount,
+                            "currentSavedAmount" to g.currentSavedAmount,
+                            "targetDate" to g.targetDate,
+                            "note" to g.note,
+                            "colorHex" to g.colorHex,
+                            "iconName" to g.iconName,
+                            "isCompleted" to g.isCompleted,
+                            "createdAt" to g.createdAt,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2380,10 +2432,27 @@ class FirestoreRepositoryImpl(
 
             val localContacts = contactDao.getAllContactsList(userId)
             val remoteIds = remoteContactsMap.keys
-            for (c in localContacts) {
-                if (!remoteIds.contains(c.id)) {
-                    saveContact(userId, c)
-                    count++
+            val missingContacts = localContacts.filter { !remoteIds.contains(it.id) }
+            if (missingContacts.isNotEmpty()) {
+                missingContacts.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { c ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_CONTACTS)
+                            .document(c.id.toString())
+                        val data = hashMapOf(
+                            "id" to c.id,
+                            "userId" to userId,
+                            "name" to c.name,
+                            "phone" to c.phone,
+                            "createdAt" to c.createdAt,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2452,10 +2521,36 @@ class FirestoreRepositoryImpl(
 
             val localDebts = loanDebtDao.getAllDebtsList(userId)
             val remoteIds = remoteDebtsMap.keys
-            for (d in localDebts) {
-                if (!remoteIds.contains(d.id)) {
-                    saveLoanDebt(userId, d)
-                    count++
+            val missingDebts = localDebts.filter { !remoteIds.contains(it.id) }
+            if (missingDebts.isNotEmpty()) {
+                missingDebts.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { d ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_LOANS_DEBTS)
+                            .document(d.id.toString())
+                        val data = hashMapOf(
+                            "id" to d.id,
+                            "userId" to userId,
+                            "contactId" to d.contactId,
+                            "personName" to d.personName,
+                            "accountId" to d.accountId,
+                            "amount" to d.amount,
+                            "paidAmount" to d.paidAmount,
+                            "type" to d.type.name,
+                            "dueDate" to d.dueDate,
+                            "note" to d.note,
+                            "phone" to d.phone,
+                            "isSettled" to d.isSettled,
+                            "createdAt" to d.createdAt,
+                            "transactionId" to d.transactionId,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2511,10 +2606,30 @@ class FirestoreRepositoryImpl(
 
             val localRepayments = loanRepaymentDao.getAllRepaymentsList(userId)
             val remoteIds = remoteRepaymentsMap.keys
-            for (r in localRepayments) {
-                if (!remoteIds.contains(r.id)) {
-                    saveLoanRepayment(userId, r)
-                    count++
+            val missingRepayments = localRepayments.filter { !remoteIds.contains(it.id) }
+            if (missingRepayments.isNotEmpty()) {
+                missingRepayments.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { r ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_LOAN_REPAYMENTS)
+                            .document(r.id.toString())
+                        val data = hashMapOf(
+                            "id" to r.id,
+                            "userId" to userId,
+                            "loanId" to r.loanId,
+                            "accountId" to r.accountId,
+                            "amount" to r.amount,
+                            "dateTimestamp" to r.dateTimestamp,
+                            "note" to r.note,
+                            "transactionId" to r.transactionId,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2661,10 +2776,31 @@ class FirestoreRepositoryImpl(
 
             val localPurchases = shopCreditPurchaseDao.getAllPurchasesList(userId)
             val rPIds = remotePurchasesMap.keys
-            for (p in localPurchases) {
-                if (!rPIds.contains(p.id)) {
-                    saveShopCreditPurchase(userId, p)
-                    count++
+            val missingPurchases = localPurchases.filter { !rPIds.contains(it.id) }
+            if (missingPurchases.isNotEmpty()) {
+                missingPurchases.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { p ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_SHOP_CREDIT_PURCHASES)
+                            .document(p.id.toString())
+                        val data = hashMapOf(
+                            "id" to p.id,
+                            "userId" to userId,
+                            "vendorId" to p.vendorId,
+                            "amount" to p.amount,
+                            "paidAmount" to p.paidAmount,
+                            "dateTimestamp" to p.dateTimestamp,
+                            "dueDate" to p.dueDate,
+                            "note" to p.note,
+                            "isSettled" to p.isSettled,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
 
@@ -2679,10 +2815,30 @@ class FirestoreRepositoryImpl(
 
             val localPayments = shopCreditPaymentDao.getAllPaymentsList(userId)
             val rPayIds = remotePaymentsMap.keys
-            for (p in localPayments) {
-                if (!rPayIds.contains(p.id)) {
-                    saveShopCreditPayment(userId, p)
-                    count++
+            val missingPayments = localPayments.filter { !rPayIds.contains(it.id) }
+            if (missingPayments.isNotEmpty()) {
+                missingPayments.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { p ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_SHOP_CREDIT_PAYMENTS)
+                            .document(p.id.toString())
+                        val data = hashMapOf(
+                            "id" to p.id,
+                            "userId" to userId,
+                            "vendorId" to p.vendorId,
+                            "accountId" to p.accountId,
+                            "amount" to p.amount,
+                            "dateTimestamp" to p.dateTimestamp,
+                            "note" to p.note,
+                            "transactionId" to p.transactionId,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {
@@ -2748,10 +2904,34 @@ class FirestoreRepositoryImpl(
 
             val localRules = recurringDao.getAllRulesList(userId)
             val remoteIds = remoteRulesMap.keys
-            for (r in localRules) {
-                if (!remoteIds.contains(r.id)) {
-                    saveRecurringRule(userId, r)
-                    count++
+            val missingRules = localRules.filter { !remoteIds.contains(it.id) }
+            if (missingRules.isNotEmpty()) {
+                missingRules.chunked(450).forEach { chunk ->
+                    val batch = firestore.batch()
+                    chunk.forEach { r ->
+                        val docRef = firestore.collection(COLLECTION_USERS)
+                            .document(userId)
+                            .collection(COLLECTION_RECURRING_RULES)
+                            .document(r.id.toString())
+                        val data = hashMapOf(
+                            "id" to r.id,
+                            "userId" to userId,
+                            "accountId" to r.accountId,
+                            "categoryId" to r.categoryId,
+                            "amount" to r.amount,
+                            "type" to r.type.name,
+                            "frequency" to r.frequency.name,
+                            "startDate" to r.startDate,
+                            "endDate" to r.endDate,
+                            "lastGeneratedDate" to r.lastGeneratedDate,
+                            "isPaused" to r.isPaused,
+                            "note" to r.note,
+                            "updatedAt" to System.currentTimeMillis()
+                        )
+                        batch.set(docRef, data, SetOptions.merge())
+                    }
+                    batch.commit().awaitTask(6000L)
+                    count += chunk.size
                 }
             }
         } catch (e: Exception) {

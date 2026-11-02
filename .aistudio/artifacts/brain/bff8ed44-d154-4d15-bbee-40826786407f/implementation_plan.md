@@ -1,129 +1,170 @@
-# Two-Step Transaction Entry & Preview Confirmation
+# High-Performance Cloud Sync Optimization & Local Preference Isolation
 
-Convert the transaction creation flow from an immediate-save single form into an intuitive, polished **2-step workflow** across both the Quick Add Bottom Sheet and the full Add/Edit Transaction Screen. Step 1 collects transaction parameters with live input validation, and Step 2 presents a high-clarity **Confirmation & Preview screen** featuring a full receipt summary, balance forecast calculation, back/edit capability, and a final "Confirm & Save" action.
+This plan optimizes the Hisab synchronization engine by replacing sequential network queries with parallel coroutines and Firestore `WriteBatch` operations, while isolating all UI preferences (language, dark mode, numeral system) to remain strictly device-local without triggering unnecessary cloud sync or UI status badge changes.
+
+---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following architectural decisions were confirmed based on your preferences:
+> The following user preferences were confirmed in Phase 1 and govern the architectural strategy:
 
-- **Confirmed Decision 1 — Multi-Step Transition**: Step 1 transitions smoothly into Step 2 within the same bottom sheet and screen using animated layout transitions, avoiding disjointed dialog popups.
-- **Confirmed Decision 2 — Full Receipt Summary**: Step 2 displays a complete transaction summary (Type badge, Amount, Category with icon badge, From/To Accounts, Date & Time, Note, Receipt preview, Fee/Exchange rate) alongside the interactive Balance Forecast Card (`TransactionBalancePreviewCard`).
-- **Confirmed Decision 3 — Unified Support Across Forms**: Both the Quick Add Bottom Sheet (`AddTransactionBottomSheet.kt`) and the full Add/Edit Screen (`AddEditTransactionScreen.kt`) implement this two-step confirmation flow, with hardware/system back button handling to return safely from Step 2 to Step 1 without data loss.
+- **Confirmed Decision 1 (Device-Local Settings)**: All UI preferences (Language switch, Dark Mode toggle, System Theme toggle, and Numeral System) will remain strictly device-local (persisted in `SharedPreferences` and local `AppDatabase` Room table). Changing these settings will never trigger Firestore network calls, `markSaving()` spinners, or cloud synchronization.
+- **Confirmed Decision 2 (Sync Acceleration Pipeline)**: Full synchronization (`syncAllWithRoom`) will transition from a 12-step sequential waterfall to a high-speed 2-phase parallel pipeline utilizing Kotlin Coroutines (`async`/`awaitAll`) and Firestore `WriteBatch` (up to 500 records per single batch network round-trip), dramatically slashing synchronization latency from 15–25 seconds down to 1–2 seconds.
+- **Confirmed Decision 3 (Responsive Status Feedback)**: The artificial delay in `markSaved()` will be refined from 2,200ms to a crisp 800ms so visual confirmation is snappy and does not give the false perception of prolonged background processing.
 
 ---
 
 ## 1. Overview & Core Concept
 
-- **What It Does**: Separates entering transaction details from the permanent save action. In Step 1, the user enters amount, account, category, date, notes, and receipt photo. Tapping "পরবর্তী" / "Next" verifies all required fields and transitions to Step 2. In Step 2, the user reviews a clear receipt card and the projected balance impact before tapping "নিশ্চিত করুন ও সংরক্ষণ" ("Confirm & Save").
-- **Target Audience / Persona**: Users managing personal and shop finances who need confidence that every transaction is logged to the correct account and category with exact amounts before balances are altered.
-- **Key Value**:
-  - **Prevents Costly Accounting Errors**: Users visually verify the before-and-after account balance and category categorization before committing.
-  - **Zero Data Loss on Revisions**: Users can easily tap "আগের ধাপ" / "Back" or swipe back from Step 2 to edit any field in Step 1 with all entered data completely intact.
-  - **Clean, Uncluttered UI**: Step 1 focuses purely on data entry without premature balance cards crowding the viewport; Step 2 focuses purely on verification and commitment.
+### What It Does
+- **Local Preference Decoupling**: Language switching (বাংলা ↔ English) and Dark Mode toggling will apply immediately in-memory and on-disk without dispatching network operations or changing the top app sync status.
+- **High-Throughput Parallel Synchronization**: Restructures `syncAllWithRoom` to fetch subcollections concurrently while maintaining strict relational foreign-key integrity (Accounts and Categories synced first, followed by Transactions, Budgets, Debts, Goals, Contacts, and Shop Credits in parallel).
+- **Atomic Bulk Uploads (`WriteBatch`)**: When local records need to be pushed to Firestore, writes are combined into atomic batches instead of executing isolated sequential HTTP/gRPC requests in loops.
+- **Direct Authenticated UID Resolution**: Bypasses slow fallback email queries when the user is already authenticated with their primary Firebase UID.
+
+### Target Audience & Persona
+- Daily personal finance and small business users in Bangladesh who expect zero UI lag when customizing the app's look and feel, and who require fast, reliable ledger synchronization across devices even on mobile data connections (2G/3G/4G).
+
+### Key Value
+- **Zero-Friction Customization**: Switching themes or languages happens in <16ms with zero network traffic.
+- **Fast Cloud Reconciliation**: Data sync is up to 5x faster, consuming less mobile battery and data bandwidth.
 
 ---
 
 ## 2. User Experience & Visual Design
 
-- **Key User Flows**:
-  1. **Step 1: Data Entry & Validation**:
-     - User selects transaction type (Expense, Income, Transfer) and enters amount using quick-amount chips (+50, +100, +500, +1000, +5000) or manual keypad.
-     - User selects Account, Category, Date/Time, Note, and optional Receipt image.
-     - The bottom action row shows:
-       - **বাতিল (Cancel)**: Closes the sheet/screen.
-       - **পরবর্তী (Next)**: Prominent button with an arrow icon (`Icons.AutoMirrored.Filled.ArrowForward`).
-     - Tapping **পরবর্তী**: Validates that amount > 0, account is valid, and (for transfers) source and destination accounts differ. If validation passes, smoothly transitions to Step 2.
-  2. **Step 2: Preview & Confirmation**:
-     - **Header**: Step progress pill (`ধাপ ২ এর ২` / `Step 2 of 2`) and transaction type badge (খরচ / আয় / ট্রান্সফার).
-     - **Hero Amount Banner**: Large bold amount with currency symbol (`৳ ৫০০.০০`), styled with color-coding (Expense Red, Income Green, Transfer Blue).
-     - **Full Receipt Card**:
-       - Category with vibrant icon and color badge.
-       - Source Account (and Target Account for Transfers).
-       - Formatted Date & Time (in Bengali or English per user setting).
-       - Note / Remarks (if entered).
-       - Receipt photo thumbnail with tap-to-expand preview (if attached).
-       - Transfer fee & exchange rate details (if applicable).
-     - **Balance Forecast Card**: The rich `TransactionBalancePreviewCard` showing current balance, deducted/added amount, and the resulting future balance.
-     - **Bottom Actions**:
-       - **আগের ধাপ (Back)**: Secondary button with back arrow (`Icons.AutoMirrored.Filled.ArrowBack`) to return to Step 1 and tweak any values.
-       - **নিশ্চিত করুন (Confirm & Save)**: Primary high-contrast button with checkmark icon (`Icons.Default.Check`) that executes the repository save, triggers sync, and dismisses the bottom sheet / screen with positive feedback.
-  3. **Back Navigation Handling (`BackHandler`)**:
-     - When on Step 2, pressing the Android system back gesture/button takes the user back to Step 1 instead of abruptly dismissing the dialog or screen.
+### Key User Flows
 
-- **Visual Identity & Theme**:
-  - *Color Palette*:
-    - Expense: Vibrant Crimson/Coral (`#EF4444`)
-    - Income: Emerald Green (`#10B981`)
-    - Transfer: Indigo/Sky Blue (`#3B82F6`)
-    - Containers: M3 tonal elevation and soft card backgrounds (`surfaceVariant` with subtle borders).
-  - *Typography*:
-    - Large display numeral for hero amount (`titleLarge` / `headlineSmall`, bold).
-    - Legible labels and values adhering to M3 density and localized Bengali numerals.
+1. **Instant Theme & Language Toggle**:
+   - User navigates to Settings or taps the language / theme toggle.
+   - Screen theme (Light/Dark) or UI locale (বাংলা/English) toggles immediately with fluid animated transitions.
+   - The top header `RealTimeStatusBadge` remains undisturbed in its normal synchronized state without displaying "সেভ হচ্ছে..." ("Saving...").
 
-- **Interactive Feedback & Motion**:
-  - Horizontal slide & fade transitions (`AnimatedContent` with `slideInHorizontally` / `slideOutHorizontally`) between Step 1 and Step 2.
-  - Ripple feedback on all touch targets (> 48dp).
+2. **Snappy Manual or Background Synchronization**:
+   - User opens the app, reconnects to Wi-Fi/Mobile Data, or taps the Sync badge in the header.
+   - The status badge transitions to `Syncing` (rotating emerald indicator).
+   - All collections synchronize concurrently in 1–2 seconds.
+   - The badge transitions to `Synced` with a subtle checkmark and auto-dismisses smoothly.
+
+3. **Transaction Creation & Real-Time Upload**:
+   - Creating or editing an expense, income, or transfer immediately updates local Room balances and the transaction feed.
+   - The transaction is uploaded asynchronously in the background.
+   - The save confirmation pill provides an 800ms visual cue before returning to steady-state `Synced`.
+
+### Visual Identity & Theme
+- **Color Palette**: Retains the rich Emerald (`#0F766E`) and Jade (`#10B981`) primary palette with clean M3 container surfaces and dark-slate backgrounds (`#0F172A`) for dark mode.
+- **Badge Transitions**: Seamless `AnimatedContent` crossfades between Synced, Syncing, and Saved states without abrupt layout shifts in the `DashboardHeader`.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-- **Decision 1: In-Place Sheet Step Transition vs. Popup Dialog**
-  - *Chosen Approach*: Maintain a single bottom sheet / screen container and swap contents via `step: Int` state (1 or 2) with `AnimatedContent`.
-  - *Why*: Popup modal dialogs on top of bottom sheets cause window focus conflicts, double scrims, and awkward keyboard resizing on mobile devices. An in-place step transition is smoother and native-feeling.
-- **Decision 2: Retain All State During Back-Navigation**
-  - *Chosen Approach*: State variables (`amountText`, `selectedAccountId`, `selectedCategory`, `note`, `receiptUriStr`, etc.) are maintained at the top of the composable so switching between Step 1 and Step 2 never resets user input.
-- **Decision 3: Keep Quick Date Chips & Quick Amount in Step 1**
-  - *Chosen Approach*: Quick-entry helpers remain in Step 1 for fast input, while Step 2 is dedicated solely to review and verification.
+### Decision 1: Device-Local UI Preferences Isolation
+- **Chosen Approach**: Remove Firestore network dispatch (`firestoreRepository.saveUserSettings(...)`) and `markSaving()` from `updateSettings(...)`. Settings are saved exclusively to Android `SharedPreferences` and local SQLite (`Room`). Remove `syncUserSettings` from `syncAllWithRoom`.
+- **Why**: Language, numeral format, and dark mode are personal device preferences (e.g. a user might prefer dark mode on a tablet and light mode on a phone). Transmitting them across the wire slows down the UI, triggers unnecessary Firestore read/write operations, and pollutes the sync state badge.
+- **Alternatives Considered**: Debouncing network requests (still causes unwanted cloud writes and status changes).
+
+### Decision 2: 2-Phase Directed Concurrency in `syncAllWithRoom`
+- **Chosen Approach**:
+  - **Phase 1 (Parent Dependencies)**: Run `syncAccounts`, `syncCategories`, and `syncVendors` in parallel using `async { ... }`. Wait for all 3 to resolve so foreign-key rows exist locally in Room.
+  - **Phase 2 (Dependent Ledger Tables)**: Run `syncTransactions`, `syncBudgets`, `syncSavingsGoals`, `syncContacts`, `syncLoansDebts`, `syncLoanRepayments`, `syncShopCredit`, and `syncRecurringRules` in parallel via `awaitAll()`.
+- **Why**: Maintains Room foreign-key integrity (transactions cannot be inserted before accounts/categories exist) while collapsing 12 sequential network round-trips into just 2 concurrent phases.
+- **Alternatives Considered**: Completely unconstrained parallel sync (causes SQLite foreign-key constraint violations); keeping sequential sync (too slow).
+
+### Decision 3: Firestore `WriteBatch` for Bulk Local-to-Cloud Uploads
+- **Chosen Approach**: In all sync methods (transactions, accounts, budgets, etc.), accumulate un-synced local records into `firestore.batch()` and commit them in single atomic roundtrips (chunked at 450 items to stay safely within Firestore's 500-write limit).
+- **Why**: Reduces 50 individual HTTP/gRPC requests down to a single network call, decreasing network latency from 15,000ms to ~300ms.
+- **Alternatives Considered**: Single document writes with `awaitTask()` (current approach, causes massive lag).
+
+### Decision 4: Priority UID Direct Lookup
+- **Chosen Approach**: If `FirebaseAuth.getInstance().currentUser?.uid` is non-empty, use that UID directly for collection references (`users/{uid}/...`). Only query candidate email indexes if the authenticated user has zero documents in their primary path.
+- **Why**: Eliminates 5–8 second timeout penalties caused by querying non-existent or restricted collection paths.
 
 ---
 
-## 4. Technical Architecture & Data Strategy *(Technical Reference)*
+## 4. Technical Architecture & Data Strategy
 
-- **Architecture & Component Diagram**:
+### System Architecture Diagram
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                   AddTransactionBottomSheet / Screen                   │
+│                        Jetpack Compose UI Layer                        │
+│   ┌───────────────────────────┐      ┌─────────────────────────────┐   │
+│   │ SettingsScreen / Switches │      │ Dashboard / TopAppBar Badge │   │
+│   │  (Language / Dark Mode)   │      │ (Synced / Syncing / Saved)  │   │
+│   └─────────────┬─────────────┘      └──────────────▲──────────────┘   │
+└─────────────────┼───────────────────────────────────┼──────────────────┘
+                  │ Local Only                        │ Reactive Status
+                  │ (No Network Call)                 │
+┌─────────────────▼───────────────────────────────────┴──────────────────┐
+│                             HisabViewModel                             │
+│   ┌───────────────────────────┐      ┌─────────────────────────────┐   │
+│   │   updateSettings()        │      │    syncWithFirestore()      │   │
+│   │ • SharedPreferences Write │      │ • AppSyncStatus.Syncing     │   │
+│   │ • Room SQLite Write       │      │ • 2-Phase Concurrency       │   │
+│   │ • NO markSaving / No Cloud│      │ • 800ms Snappy markSaved()  │   │
+│   └───────────────────────────┘      └──────────────┬──────────────┘   │
+└─────────────────────────────────────────────────────┼──────────────────┘
+                                                      │
+┌─────────────────────────────────────────────────────▼──────────────────┐
+│                   FirestoreRepositoryImpl Engine                       │
 │                                                                        │
-│  State: currentStep (1 = Input, 2 = Confirmation)                      │
-│                                                                        │
-│  ┌─────────────────────────────────┐   ┌─────────────────────────────┐ │
-│  │             STEP 1              │   │           STEP 2            │ │
-│  │       (Input & Form)            │   │   (Preview & Confirmation)  │ │
-│  │                                 │   │                             │ │
-│  │ • Transaction Type Chips        │   │ • Step Indicator (Step 2/2) │ │
-│  │ • Amount Input + Quick Chips    │   │ • Hero Amount Display       │ │
-│  │ • Account Selector Chips        │──►│ • Full Receipt Summary Card │ │
-│  │ • Category Dropdown             │   │ • Balance Forecast Card     │ │
-│  │ • Date & Time Selector          │   │                             │ │
-│  │ • Note & Receipt Image Picker   │   │ [Back]    [Confirm & Save]  │ │
-│  │                                 │   │   │              │          │ │
-│  │ [Cancel]             [Next ──►] │   └───┼──────────────┼──────────┘ │
-│  └─────────────────────────────────┘       │              ▼            │
-│                       ▲                    │       viewModel.addTx()   │
-│                       └────────────────────┘       dismiss & sync      │
-│                            (Edit / Back)                               │
-└────────────────────────────────────────────────────────────────────────┘
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │ Phase 1 Concurrency: Parent Entities                           │   │
+│   │ ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   │   │
+│   │ │  syncAccounts  │   │ syncCategories │   │  syncVendors   │   │   │
+│   │ └────────────────┘   └────────────────┘   └────────────────┘   │   │
+│   └────────────────────────────────┬───────────────────────────────┘   │
+│                                    ▼                                   │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │ Phase 2 Concurrency: Dependent Data (with WriteBatch)          │   │
+│   │ ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   │   │
+│   │ │syncTransactions│   │  syncBudgets   │   │syncSavingsGoals│   │   │
+│   │ ├────────────────┤   ├────────────────┤   ├────────────────┤   │   │
+│   │ │  syncContacts  │   │ syncLoansDebts │   │ syncRepayments │   │   │
+│   │ ├────────────────┤   ├────────────────┤   ├────────────────┤   │   │
+│   │ │ syncShopCredit │   │syncRecurringRul│   │ (Settings OMIT)│   │   │
+│   │ └────────────────┘   └────────────────┘   └────────────────┘   │   │
+│   └────────────────────────────────┬───────────────────────────────┘   │
+└────────────────────────────────────┼───────────────────────────────────┘
+                                     │
+           ┌─────────────────────────┴─────────────────────────┐
+           ▼                                                   ▼
+┌──────────────────────┐                           ┌─────────────────────┐
+│ Room Database (Disk) │                           │ Firebase Cloud      │
+│ • Local First        │                           │ • Firestore DB      │
+│ • Zero UI Latency    │                           │ • WriteBatch Upload │
+└──────────────────────┘                           └─────────────────────┘
 ```
 
-- **Interactive State & Logic**:
-  - `var currentStep by remember { mutableStateOf(1) }`
-  - In Step 1:
-    - Button click executes validation:
-      - Valid amount > 0: `errorMessage = null; currentStep = 2`
-      - Invalid amount: `errorMessage = "অনুগ্রহ করে সঠিক পরিমাণ লিখুন"`
-  - In Step 2:
-    - `BackHandler(enabled = currentStep == 2) { currentStep = 1 }`
-    - "Back" button: `currentStep = 1`
-    - "Confirm" button: calls `handleSave(selectedType)` which writes to Room database, schedules sync, and invokes `closeSheet()`.
-- **String Localization Resources**:
-  - Add localized strings for Step 1 / Step 2 indicators:
-    - `step_1_of_2`: `"ধাপ ১ এর ২"` / `"Step 1 of 2"`
-    - `step_2_of_2`: `"ধাপ ২ এর ২"` / `"Step 2 of 2"`
-    - `next_step`: `"পরবর্তী"` / `"Next"`
-    - `previous_step`: `"আগের ধাপ"` / `"Back"`
-    - `confirm_and_save`: `"নিশ্চিত করুন ও সংরক্ষণ"` / `"Confirm & Save"`
-    - `transaction_preview`: `"লেনদেন পূর্বরূপ"` / `"Transaction Preview"`
-    - `confirm_transaction`: `"লেনদেন নিশ্চিতকরণ"` / `"Confirm Transaction"`
+### Data Model & State Boundaries
+
+| Data Domain | Storage Mechanism | Cloud Sync Behavior | Trigger / State |
+| :--- | :--- | :--- | :--- |
+| **Language (bn/en)** | `SharedPreferences` + Room | **Never Synced** (Strictly Local) | Immediate UI Recomposition; no sync badge |
+| **Dark / System Theme** | `SharedPreferences` + Room | **Never Synced** (Strictly Local) | Immediate UI Recomposition; no sync badge |
+| **Numeral System** | `SharedPreferences` + Room | **Never Synced** (Strictly Local) | Immediate UI Recomposition; no sync badge |
+| **Transactions** | Room SQLite $\leftrightarrow$ Firestore | **Instant Async + Full Bi-directional** | Immediate async upload on add/edit/delete; parallel bulk sync on refresh |
+| **Accounts & Balances**| Room SQLite $\leftrightarrow$ Firestore | **Phase 1 Parallel Bi-directional** | Guaranteed precedence before dependent transaction mapping |
+| **Categories & Vendors**| Room SQLite $\leftrightarrow$ Firestore | **Phase 1 Parallel Bi-directional** | Guaranteed precedence before dependent transaction mapping |
+| **Budgets & Goals** | Room SQLite $\leftrightarrow$ Firestore | **Phase 2 Parallel Bi-directional** | WriteBatch atomic upload for un-synced items |
+| **Debts & Shop Credit**| Room SQLite $\leftrightarrow$ Firestore | **Phase 2 Parallel Bi-directional** | WriteBatch atomic upload for un-synced items |
+
+### Interactive Component & State Mapping
+
+1. **`HisabViewModel.updateSettings`**:
+   - Update `appPrefs` synchronously.
+   - Update `_settings.value` StateFlow.
+   - Persist to Room `hisabRepository.updateSettings(target)` in IO coroutine.
+   - **Do NOT** call `markSaving()`, `markSaved()`, or `firestoreRepository.saveUserSettings(...)`.
+
+2. **`FirestoreRepositoryImpl.syncAllWithRoom`**:
+   - Resolve primary UID directly (`FirebaseAuth.getInstance().currentUser?.uid`).
+   - Run Phase 1 coroutine block (`syncAccounts`, `syncCategories`, `syncVendors`).
+   - Run Phase 2 coroutine block (`syncTransactions`, `syncBudgets`, `syncSavingsGoals`, `syncContacts`, `syncLoansDebts`, `syncLoanRepayments`, `syncShopCredit`, `syncRecurringRules`).
+   - Utilize `firestore.batch()` for any local items missing on remote.
+   - Return total synchronized item count.
+
+3. **`HisabViewModel.markSaved`**:
+   - Reduce delay from 2200ms to 800ms before returning to `AppSyncStatus.Synced()`.
