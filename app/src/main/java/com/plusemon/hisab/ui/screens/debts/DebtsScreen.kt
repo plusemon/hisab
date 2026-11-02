@@ -62,7 +62,12 @@ import androidx.compose.material.icons.filled.Place
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Store
 import androidx.compose.material.icons.filled.Unarchive
+import androidx.compose.material.icons.filled.Check
+import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.ReceiptLong
+import androidx.compose.material.icons.filled.Schedule
 import androidx.compose.material.icons.filled.Warning
+import com.plusemon.hisab.ui.viewmodel.AccountWithBalance
 import androidx.compose.material3.BottomSheetDefaults
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -177,6 +182,7 @@ fun DebtsScreen(
 
     var showAddLoanBottomSheet by remember { mutableStateOf(false) }
     var recordingPaymentDebt by remember { mutableStateOf<LoanDebt?>(null) }
+    var settlingFullDebt by remember { mutableStateOf<LoanDebt?>(null) }
 
     var showAddCreditBottomSheet by remember { mutableStateOf(false) }
     var showAddVendorBottomSheet by remember { mutableStateOf(false) }
@@ -264,6 +270,22 @@ fun DebtsScreen(
             onConfirm = { accountId, paymentAmount, note ->
                 viewModel.recordDebtPayment(recordingPaymentDebt!!.id, accountId, paymentAmount, note)
                 recordingPaymentDebt = null
+            }
+        )
+    }
+
+    if (settlingFullDebt != null) {
+        val targetDebt = settlingFullDebt!!
+        SettleFullDebtDialog(
+            debt = targetDebt,
+            accounts = accounts,
+            currencySymbol = currSymbol,
+            isBangla = isBn,
+            useBnDigits = useBnDigits,
+            onDismiss = { settlingFullDebt = null },
+            onConfirm = { accountId, note ->
+                viewModel.recordDebtPayment(targetDebt.id, accountId, targetDebt.remainingAmount, note)
+                settlingFullDebt = null
             }
         )
     }
@@ -504,6 +526,7 @@ fun DebtsScreen(
                         DebtsOverviewContent(
                             contacts = contacts,
                             debts = allDebts,
+                            accounts = accounts,
                             totalReceivable = totalOwedToMe,
                             totalPayable = totalIOwe,
                             isBangla = isBn,
@@ -511,7 +534,10 @@ fun DebtsScreen(
                             hideBalances = hideBalances,
                             currencySymbol = currSymbol,
                             onContactClick = { contactId -> selectedContactId = contactId },
-                            onAddDebtClick = { showAddLoanBottomSheet = true }
+                            onAddDebtClick = { showAddLoanBottomSheet = true },
+                            onRecordPayment = { debt -> recordingPaymentDebt = debt },
+                            onSettleFull = { debt -> settlingFullDebt = debt },
+                            onDeleteDebt = { debt -> debtToDelete = debt }
                         )
                     } else {
                         ShopCreditOverviewContent(
@@ -533,11 +559,13 @@ fun DebtsScreen(
                 ContactLedgerContent(
                     contact = activeContact,
                     debts = allDebts.filter { it.contactId == activeContact.id || it.personName.equals(activeContact.name, true) },
+                    accounts = accounts,
                     isBangla = isBn,
                     useBnDigits = useBnDigits,
                     hideBalances = hideBalances,
                     currencySymbol = currSymbol,
                     onRecordPayment = { debt -> recordingPaymentDebt = debt },
+                    onSettleFull = { debt -> settlingFullDebt = debt },
                     onDeleteDebt = { debt -> debtToDelete = debt },
                     onAddEntryClick = { showAddLoanBottomSheet = true },
                     onUpdateContactPhone = { updatedContact, newPhone ->
@@ -569,10 +597,109 @@ fun DebtsScreen(
 // -------------------------------------------------------------
 // LENDING & BORROWING CONTENT (FLAT DESIGN SYSTEM)
 // -------------------------------------------------------------
+enum class DebtStatusFilter(val labelEn: String, val labelBn: String) {
+    ALL("All", "সব হিসাব"),
+    UNPAID("Unpaid", "বাকি"),
+    PAID("Paid", "পরিশোধিত")
+}
+
+enum class DebtViewMode(val labelEn: String, val labelBn: String) {
+    ALL_RECORDS("All Records", "সব এন্ট্রি"),
+    BY_CONTACT("By Contact", "কন্টাক্ট অনুসারে")
+}
+
+enum class DebtTypeFilter(val labelEn: String, val labelBn: String) {
+    ALL("All", "সব"),
+    OWED_TO_ME("Gave Money", "দিলাম (পাওনা)"),
+    I_OWE("Took Money", "নিলাম (দেনা)")
+}
+
+private data class DebtBadgeStyle(
+    val bg: Color,
+    val text: Color,
+    val border: Color,
+    val icon: androidx.compose.ui.graphics.vector.ImageVector,
+    val label: String
+)
+
+@Composable
+fun DebtStatusBadge(
+    isSettled: Boolean,
+    paidAmount: Double,
+    amount: Double,
+    dueDate: Long?,
+    isBangla: Boolean,
+    modifier: Modifier = Modifier
+) {
+    val isOverdue = dueDate != null && dueDate < System.currentTimeMillis() && !isSettled
+    val isPartial = !isSettled && paidAmount > 0.0
+
+    val style = when {
+        isSettled -> DebtBadgeStyle(
+            bg = Color(0xFFDCFCE7),
+            text = Color(0xFF15803D),
+            border = Color(0xFF86EFAC),
+            icon = Icons.Default.CheckCircle,
+            label = if (isBangla) "পরিশোধিত" else "Paid"
+        )
+        isOverdue -> DebtBadgeStyle(
+            bg = Color(0xFFFEE2E2),
+            text = Color(0xFFB91C1C),
+            border = Color(0xFFFCA5A5),
+            icon = Icons.Default.Warning,
+            label = if (isBangla) "মেয়াদোত্তীর্ণ" else "Overdue"
+        )
+        isPartial -> DebtBadgeStyle(
+            bg = Color(0xFFE0F2FE),
+            text = Color(0xFF0369A1),
+            border = Color(0xFF7DD3FC),
+            icon = Icons.Default.Schedule,
+            label = if (isBangla) "আংশিক পরিশোধিত" else "Partially Paid"
+        )
+        else -> DebtBadgeStyle(
+            bg = Color(0xFFFEF3C7),
+            text = Color(0xFFB45309),
+            border = Color(0xFFFDE68A),
+            icon = Icons.Default.Schedule,
+            label = if (isBangla) "অপরিশোধিত" else "Unpaid"
+        )
+    }
+
+    Surface(
+        shape = RoundedCornerShape(8.dp),
+        color = style.bg,
+        border = BorderStroke(1.dp, style.border),
+        modifier = modifier
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = style.icon,
+                contentDescription = null,
+                tint = style.text,
+                modifier = Modifier.size(13.dp)
+            )
+            Spacer(modifier = Modifier.width(4.dp))
+            Text(
+                text = style.label,
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Bold,
+                color = style.text
+            )
+        }
+    }
+}
+
+// -------------------------------------------------------------
+// LENDING & BORROWING CONTENT (DEDICATED STATUS MODULE)
+// -------------------------------------------------------------
 @Composable
 fun DebtsOverviewContent(
     contacts: List<Contact>,
     debts: List<LoanDebt>,
+    accounts: List<AccountWithBalance>,
     totalReceivable: Double,
     totalPayable: Double,
     isBangla: Boolean,
@@ -580,16 +707,84 @@ fun DebtsOverviewContent(
     hideBalances: Boolean,
     currencySymbol: String,
     onContactClick: (Long) -> Unit,
-    onAddDebtClick: () -> Unit
+    onAddDebtClick: () -> Unit,
+    onRecordPayment: (LoanDebt) -> Unit,
+    onSettleFull: (LoanDebt) -> Unit,
+    onDeleteDebt: (LoanDebt) -> Unit
 ) {
     val isBn = isBangla
-    val contactSummaries = remember(contacts, debts) {
-        contacts.map { contact ->
-            val contactDebts = debts.filter { it.contactId == contact.id || it.personName.equals(contact.name, true) }
-            val owedToMe = contactDebts.filter { it.type == DebtType.OWED_TO_ME && !it.isSettled }.sumOf { it.remainingAmount }
-            val iOwe = contactDebts.filter { it.type == DebtType.I_OWE && !it.isSettled }.sumOf { it.remainingAmount }
-            val net = owedToMe - iOwe
-            Triple(contact, net, contactDebts)
+    val context = LocalContext.current
+    var selectedStatus by remember { mutableStateOf(DebtStatusFilter.ALL) }
+    var viewMode by remember { mutableStateOf(DebtViewMode.ALL_RECORDS) }
+    var selectedTypeFilter by remember { mutableStateOf(DebtTypeFilter.ALL) }
+    var searchQuery by remember { mutableStateOf("") }
+
+    val allCount = debts.size
+    val unpaidCount = debts.count { !it.isSettled }
+    val settledCount = debts.count { it.isSettled }
+    val totalSettled = debts.filter { it.isSettled }.sumOf { it.amount }
+
+    // Filter individual debt records
+    val filteredDebts = remember(debts, selectedStatus, selectedTypeFilter, searchQuery) {
+        debts.filter { debt ->
+            val matchesStatus = when (selectedStatus) {
+                DebtStatusFilter.ALL -> true
+                DebtStatusFilter.UNPAID -> !debt.isSettled
+                DebtStatusFilter.PAID -> debt.isSettled
+            }
+            val matchesType = when (selectedTypeFilter) {
+                DebtTypeFilter.ALL -> true
+                DebtTypeFilter.OWED_TO_ME -> debt.type == DebtType.OWED_TO_ME
+                DebtTypeFilter.I_OWE -> debt.type == DebtType.I_OWE
+            }
+            val matchesSearch = searchQuery.isBlank() ||
+                debt.personName.contains(searchQuery, ignoreCase = true) ||
+                debt.phone.contains(searchQuery, ignoreCase = true) ||
+                debt.note.contains(searchQuery, ignoreCase = true)
+
+            matchesStatus && matchesType && matchesSearch
+        }.sortedWith(
+            compareBy<LoanDebt> { it.isSettled }
+                .thenByDescending { it.dueDate ?: Long.MAX_VALUE }
+                .thenByDescending { it.createdAt }
+        )
+    }
+
+    // Filter contact summaries
+    val contactSummaries = remember(contacts, debts, selectedStatus, selectedTypeFilter, searchQuery) {
+        contacts.mapNotNull { contact ->
+            val cDebts = debts.filter { it.contactId == contact.id || it.personName.equals(contact.name, true) }
+            val visibleDebts = cDebts.filter { debt ->
+                val matchesStatus = when (selectedStatus) {
+                    DebtStatusFilter.ALL -> true
+                    DebtStatusFilter.UNPAID -> !debt.isSettled
+                    DebtStatusFilter.PAID -> debt.isSettled
+                }
+                val matchesType = when (selectedTypeFilter) {
+                    DebtTypeFilter.ALL -> true
+                    DebtTypeFilter.OWED_TO_ME -> debt.type == DebtType.OWED_TO_ME
+                    DebtTypeFilter.I_OWE -> debt.type == DebtType.I_OWE
+                }
+                matchesStatus && matchesType
+            }
+
+            if (selectedStatus != DebtStatusFilter.ALL && visibleDebts.isEmpty()) {
+                null
+            } else {
+                val owedToMe = cDebts.filter { it.type == DebtType.OWED_TO_ME && !it.isSettled }.sumOf { it.remainingAmount }
+                val iOwe = cDebts.filter { it.type == DebtType.I_OWE && !it.isSettled }.sumOf { it.remainingAmount }
+                val net = owedToMe - iOwe
+                val unpaidNum = cDebts.count { !it.isSettled }
+                val settledNum = cDebts.count { it.isSettled }
+
+                val matchesSearch = searchQuery.isBlank() ||
+                    contact.name.contains(searchQuery, ignoreCase = true) ||
+                    contact.phone.contains(searchQuery, ignoreCase = true)
+
+                if (matchesSearch) {
+                    Quadruple(contact, net, unpaidNum, settledNum)
+                } else null
+            }
         }.sortedByDescending { kotlin.math.abs(it.second) }
     }
 
@@ -598,96 +793,390 @@ fun DebtsOverviewContent(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        // Flat cards for Receivable & Payable (No soft pastel fills)
+        // Summary Cards: Receivable, Payable, and Settled
+        item {
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("summary_card_receivable"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, IncomeGreen.copy(alpha = 0.5f)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(IncomeGreen)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isBn) "মোট পাওনা (বাকি)" else "Receivable (Unpaid)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = IncomeGreen
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            CurrencyAmountText(
+                                amount = totalReceivable,
+                                currencySymbol = currencySymbol,
+                                useBanglaDigits = useBnDigits,
+                                hideBalances = hideBalances,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = IncomeGreen
+                            )
+                        }
+                    }
+
+                    Card(
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("summary_card_payable"),
+                        shape = RoundedCornerShape(14.dp),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                        border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f)),
+                        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                    ) {
+                        Column(modifier = Modifier.padding(14.dp)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(8.dp)
+                                        .clip(CircleShape)
+                                        .background(ExpenseRed)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isBn) "মোট দেনা (বাকি)" else "Payable (Unpaid)",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = ExpenseRed
+                                )
+                            }
+                            Spacer(modifier = Modifier.height(6.dp))
+                            CurrencyAmountText(
+                                amount = totalPayable,
+                                currencySymbol = currencySymbol,
+                                useBanglaDigits = useBnDigits,
+                                hideBalances = hideBalances,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold,
+                                color = ExpenseRed
+                            )
+                        }
+                    }
+                }
+
+                // Total Settled Summary Banner
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("summary_card_settled"),
+                    shape = RoundedCornerShape(12.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                    border = BorderStroke(1.dp, Color(0xFF10B981).copy(alpha = 0.35f)),
+                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
+                ) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 14.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(
+                                imageVector = Icons.Default.CheckCircle,
+                                contentDescription = null,
+                                tint = Color(0xFF15803D),
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Column {
+                                Text(
+                                    text = if (isBn) "মোট পরিশোধিত ঋণ/ধার" else "Total Settled Records",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    fontWeight = FontWeight.Bold,
+                                    color = Color(0xFF15803D)
+                                )
+                                Text(
+                                    text = if (isBn) "$settledCount টি এন্ট্রি সম্পূর্ণ শোধ হয়েছে" else "$settledCount entries fully cleared",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                        CurrencyAmountText(
+                            amount = totalSettled,
+                            currencySymbol = currencySymbol,
+                            useBanglaDigits = useBnDigits,
+                            hideBalances = hideBalances,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF15803D)
+                        )
+                    }
+                }
+            }
+        }
+
+        // Dedicated Status Indicator Tabs (All, Unpaid, Paid)
+        item {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("debt_status_filter_tabs")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    DebtStatusFilter.values().forEach { filter ->
+                        val isSelected = selectedStatus == filter
+                        val count = when (filter) {
+                            DebtStatusFilter.ALL -> allCount
+                            DebtStatusFilter.UNPAID -> unpaidCount
+                            DebtStatusFilter.PAID -> settledCount
+                        }
+                        val (badgeBg, badgeTextColor) = when (filter) {
+                            DebtStatusFilter.ALL -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+                            DebtStatusFilter.UNPAID -> Color(0xFFFEF3C7) to Color(0xFFB45309)
+                            DebtStatusFilter.PAID -> Color(0xFFDCFCE7) to Color(0xFF15803D)
+                        }
+
+                        Surface(
+                            onClick = { selectedStatus = filter },
+                            shape = RoundedCornerShape(9.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("tab_${filter.name.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isBn) filter.labelBn else filter.labelEn,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Surface(
+                                    shape = CircleShape,
+                                    color = badgeBg
+                                ) {
+                                    Text(
+                                        text = if (useBnDigits) Formatters.toBanglaDigits(count.toString()) else count.toString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = badgeTextColor,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Sub-filter Row: Type Filter Chips + View Mode Switch
         item {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, IncomeGreen.copy(alpha = 0.5f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = if (isBn) "মোট পাওনা (সবাই দেবে)" else "Total Receivable",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = IncomeGreen
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        CurrencyAmountText(
-                            amount = totalReceivable,
-                            currencySymbol = currencySymbol,
-                            useBanglaDigits = useBnDigits,
-                            hideBalances = hideBalances,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = IncomeGreen
-                        )
-                    }
-                }
-
-                Card(
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                    border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.5f)),
-                    elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-                ) {
-                    Column(modifier = Modifier.padding(16.dp)) {
-                        Text(
-                            text = if (isBn) "মোট দেনা (আমি দেব)" else "Total Payable",
-                            style = MaterialTheme.typography.labelMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = ExpenseRed
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        CurrencyAmountText(
-                            amount = totalPayable,
-                            currencySymbol = currencySymbol,
-                            useBanglaDigits = useBnDigits,
-                            hideBalances = hideBalances,
-                            style = MaterialTheme.typography.titleMedium,
-                            fontWeight = FontWeight.Bold,
-                            color = ExpenseRed
-                        )
-                    }
-                }
-            }
-        }
-
-        item {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text(
-                    text = if (isBn) "কন্টাক্টসমূহ (লেনদেন অনুসারে)" else "Contacts Ledger",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                // Type Filter Chips
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    FilterChip(
+                        selected = selectedTypeFilter == DebtTypeFilter.ALL,
+                        onClick = { selectedTypeFilter = DebtTypeFilter.ALL },
+                        label = { Text(if (isBn) "সব" else "All", style = MaterialTheme.typography.labelSmall) },
+                        shape = RoundedCornerShape(8.dp),
+                        modifier = Modifier.testTag("filter_type_all")
+                    )
+                    FilterChip(
+                        selected = selectedTypeFilter == DebtTypeFilter.OWED_TO_ME,
+                        onClick = { selectedTypeFilter = DebtTypeFilter.OWED_TO_ME },
+                        label = { Text(if (isBn) "পাওনা" else "Receivable", style = MaterialTheme.typography.labelSmall) },
+                        shape = RoundedCornerShape(8.dp),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.TrendingUp,
+                                contentDescription = null,
+                                tint = IncomeGreen,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("filter_type_receivable")
+                    )
+                    FilterChip(
+                        selected = selectedTypeFilter == DebtTypeFilter.I_OWE,
+                        onClick = { selectedTypeFilter = DebtTypeFilter.I_OWE },
+                        label = { Text(if (isBn) "দেনা" else "Payable", style = MaterialTheme.typography.labelSmall) },
+                        shape = RoundedCornerShape(8.dp),
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.AutoMirrored.Filled.TrendingDown,
+                                contentDescription = null,
+                                tint = ExpenseRed,
+                                modifier = Modifier.size(13.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("filter_type_payable")
+                    )
+                }
+
+                // View Mode Toggle
+                Surface(
+                    onClick = {
+                        viewMode = if (viewMode == DebtViewMode.ALL_RECORDS) DebtViewMode.BY_CONTACT else DebtViewMode.ALL_RECORDS
+                    },
+                    shape = RoundedCornerShape(8.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
+                    border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                    modifier = Modifier.testTag("toggle_view_mode_btn")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = if (viewMode == DebtViewMode.ALL_RECORDS) Icons.Default.ReceiptLong else Icons.Default.People,
+                            contentDescription = null,
+                            modifier = Modifier.size(14.dp),
+                            tint = MaterialTheme.colorScheme.primary
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (viewMode == DebtViewMode.ALL_RECORDS) {
+                                if (isBn) "সব এন্ট্রি" else "All Records"
+                            } else {
+                                if (isBn) "কন্টাক্ট অনুসারে" else "By Contact"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.primary
+                        )
+                    }
+                }
+            }
+        }
+
+        // Search Bar (if more than 2 debts exist)
+        if (allCount > 2) {
+            item {
+                OutlinedTextField(
+                    value = searchQuery,
+                    onValueChange = { searchQuery = it },
+                    placeholder = {
+                        Text(
+                            text = if (isBn) "নাম, ফোন নম্বর বা নোট লিখে খুঁজুন..." else "Search by person, phone, note...",
+                            fontSize = 13.sp
+                        )
+                    },
+                    leadingIcon = {
+                        Icon(Icons.Default.Search, contentDescription = null, modifier = Modifier.size(18.dp))
+                    },
+                    trailingIcon = {
+                        if (searchQuery.isNotBlank()) {
+                            IconButton(onClick = { searchQuery = "" }, modifier = Modifier.size(24.dp)) {
+                                Icon(Icons.Default.Close, contentDescription = null, modifier = Modifier.size(16.dp))
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(50.dp)
+                        .testTag("search_debts_input"),
+                    shape = RoundedCornerShape(12.dp),
+                    singleLine = true,
+                    colors = OutlinedTextFieldDefaults.colors(
+                        focusedContainerColor = MaterialTheme.colorScheme.surface,
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface
+                    )
                 )
             }
         }
 
-        if (contactSummaries.isEmpty()) {
-            item {
-                EmptyStateView(
-                    icon = Icons.Default.People,
-                    title = Localization.getString(Localization.Key.EMPTY_DEBTS, isBn),
-                    description = if (isBn) "কারো কাছে টাকা পাওনা বা দেনা থাকলে এখানে হিসাব রাখতে পারেন।" else "Track money owed to you or money you owe to others here.",
-                    actionLabel = if (isBn) "+ নতুন ধার যোগ করুন" else "+ Record Loan/Debt",
-                    onActionClick = onAddDebtClick
-                )
+        // Main Content Feed
+        if (viewMode == DebtViewMode.ALL_RECORDS) {
+            if (filteredDebts.isEmpty()) {
+                item {
+                    val emptyTitle = when (selectedStatus) {
+                        DebtStatusFilter.ALL -> Localization.getString(Localization.Key.EMPTY_DEBTS, isBn)
+                        DebtStatusFilter.UNPAID -> if (isBn) "কোনো বাকি নেই!" else "No Pending Debts!"
+                        DebtStatusFilter.PAID -> if (isBn) "কোনো পরিশোধিত হিসাব নেই" else "No Settled Debts"
+                    }
+                    val emptyDesc = when (selectedStatus) {
+                        DebtStatusFilter.ALL -> if (isBn) "কারো কাছে টাকা পাওনা বা দেনা থাকলে এখানে হিসাব রাখতে পারেন।" else "Track money owed to you or money you owe to others here."
+                        DebtStatusFilter.UNPAID -> if (isBn) "চমৎকার! আপনার কোনো অপরিশোধিত ধার বা ঋণ বাকি নেই।" else "Awesome! You have no unpaid lending or borrowing records."
+                        DebtStatusFilter.PAID -> if (isBn) "কোনো ধার বা ঋণ সম্পূর্ণ শোধ হলে তা এই পরিশোধিত ট্যাবে দেখা যাবে।" else "When a loan or debt is fully paid, it will appear here."
+                    }
+                    EmptyStateView(
+                        icon = if (selectedStatus == DebtStatusFilter.UNPAID) Icons.Default.CheckCircle else Icons.Default.ReceiptLong,
+                        title = emptyTitle,
+                        description = emptyDesc,
+                        actionLabel = if (isBn) "+ নতুন ধার যোগ করুন" else "+ Record Loan/Debt",
+                        onActionClick = onAddDebtClick
+                    )
+                }
+            } else {
+                items(filteredDebts, key = { it.id }) { debt ->
+                    LoanDebtItemCard(
+                        debt = debt,
+                        isBangla = isBn,
+                        useBnDigits = useBnDigits,
+                        hideBalances = hideBalances,
+                        currencySymbol = currencySymbol,
+                        onRecordPayment = { onRecordPayment(debt) },
+                        onSettleFull = { onSettleFull(debt) },
+                        onDelete = { onDeleteDebt(debt) },
+                        onCallContact = if (debt.phone.isNotBlank()) {
+                            { ContactUtils.dialPhoneNumber(context, debt.phone, isBn) }
+                        } else null,
+                        showContactInfo = true
+                    )
+                }
             }
         } else {
-            items(contactSummaries, key = { it.first.id }) { (contact, net, contactDebts) ->
+            // By Contact View
+            if (contactSummaries.isEmpty()) {
+                item {
+                    EmptyStateView(
+                        icon = Icons.Default.People,
+                        title = Localization.getString(Localization.Key.EMPTY_DEBTS, isBn),
+                        description = if (isBn) "এই ফিল্টারে কোনো কন্টাক্ট পাওয়া যায়নি।" else "No contacts match the current filter.",
+                        actionLabel = if (isBn) "+ নতুন ধার যোগ করুন" else "+ Record Loan/Debt",
+                        onActionClick = onAddDebtClick
+                    )
+                }
+            } else {
+                items(contactSummaries, key = { it.first.id }) { (contact, net, unpaidNum, settledNum) ->
                     val isReceivable = net > 0
                     val isPayable = net < 0
                     val badgeColor = when {
@@ -699,8 +1188,9 @@ fun DebtsOverviewContent(
                     Card(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clickable { onContactClick(contact.id) },
-                        shape = RoundedCornerShape(12.dp),
+                            .clickable { onContactClick(contact.id) }
+                            .testTag("contact_summary_card_${contact.id}"),
+                        shape = RoundedCornerShape(14.dp),
                         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
                         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
                         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -713,7 +1203,7 @@ fun DebtsOverviewContent(
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(44.dp)
+                                    .size(46.dp)
                                     .clip(RoundedCornerShape(12.dp))
                                     .background(MaterialTheme.colorScheme.surfaceVariant),
                                 contentAlignment = Alignment.Center
@@ -722,7 +1212,7 @@ fun DebtsOverviewContent(
                                     imageVector = Icons.Default.Person,
                                     contentDescription = null,
                                     tint = badgeColor,
-                                    modifier = Modifier.size(22.dp)
+                                    modifier = Modifier.size(24.dp)
                                 )
                             }
 
@@ -734,26 +1224,53 @@ fun DebtsOverviewContent(
                                     style = MaterialTheme.typography.titleMedium,
                                     fontWeight = FontWeight.Bold
                                 )
-                                if (contact.phone.isNotBlank()) {
-                                    Text(
-                                        text = contact.phone,
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                } else {
-                                    Text(
-                                        text = "${contactDebts.size} ${if (isBn) "টি এন্ট্রি" else "entries"}",
-                                        style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    if (unpaidNum > 0) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = Color(0xFFFEF3C7)
+                                        ) {
+                                            Text(
+                                                text = "${if (isBn) "বাকি:" else "Unpaid:"} $unpaidNum",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFFB45309),
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                    }
+                                    if (settledNum > 0) {
+                                        Surface(
+                                            shape = RoundedCornerShape(4.dp),
+                                            color = Color(0xFFDCFCE7)
+                                        ) {
+                                            Text(
+                                                text = "${if (isBn) "পরিশোধিত:" else "Paid:"} $settledNum",
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = Color(0xFF15803D),
+                                                fontWeight = FontWeight.Bold,
+                                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp)
+                                            )
+                                        }
+                                    }
+                                    if (unpaidNum == 0 && settledNum == 0) {
+                                        Text(
+                                            text = if (isBn) "কোনো লেনদেন নেই" else "No entries",
+                                            style = MaterialTheme.typography.bodySmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                                        )
+                                    }
                                 }
                             }
 
                             if (contact.phone.isNotBlank()) {
-                                val context = LocalContext.current
                                 IconButton(
                                     onClick = { ContactUtils.dialPhoneNumber(context, contact.phone, isBn) },
-                                    modifier = Modifier.size(36.dp).testTag("quick_call_${contact.id}")
+                                    modifier = Modifier
+                                        .size(36.dp)
+                                        .testTag("quick_call_${contact.id}")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.Call,
@@ -788,10 +1305,13 @@ fun DebtsOverviewContent(
                             }
                         }
                     }
+                }
             }
         }
     }
 }
+
+private data class Quadruple<A, B, C, D>(val first: A, val second: B, val third: C, val fourth: D)
 
 @Composable
 fun EditContactPhoneDialog(
@@ -957,15 +1477,192 @@ fun EditContactPhoneDialog(
     }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun SettleFullDebtDialog(
+    debt: LoanDebt,
+    accounts: List<AccountWithBalance>,
+    currencySymbol: String,
+    isBangla: Boolean,
+    useBnDigits: Boolean,
+    onDismiss: () -> Unit,
+    onConfirm: (accountId: Long, note: String) -> Unit
+) {
+    var selectedAccountId by remember {
+        mutableStateOf(
+            debt.accountId.takeIf { id -> accounts.any { it.account.id == id } }
+                ?: accounts.firstOrNull()?.account?.id ?: 1L
+        )
+    }
+    var note by remember { mutableStateOf(if (isBangla) "সম্পূর্ণ পরিশোধ" else "Full settlement") }
+    var isAccountDropdownExpanded by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(12.dp)
+                .testTag("settle_full_debt_dialog"),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier
+                            .size(42.dp)
+                            .clip(CircleShape)
+                            .background(Color(0xFFDCFCE7)),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(24.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Column {
+                        Text(
+                            text = if (isBangla) "ধার সম্পূর্ণ শোধ করবেন?" else "Mark Debt as Settled?",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold
+                        )
+                        Text(
+                            text = debt.personName,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            text = if (isBangla) "পরিশোধের বাকি পরিমাণ:" else "Remaining Amount:",
+                            style = MaterialTheme.typography.bodyMedium
+                        )
+                        CurrencyAmountText(
+                            amount = debt.remainingAmount,
+                            currencySymbol = currencySymbol,
+                            useBanglaDigits = useBnDigits,
+                            hideBalances = false,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = if (debt.type == DebtType.OWED_TO_ME) IncomeGreen else ExpenseRed
+                        )
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                if (accounts.isNotEmpty()) {
+                    Text(
+                        text = if (debt.type == DebtType.OWED_TO_ME) {
+                            if (isBangla) "টাকা গ্রহণের অ্যাকাউন্ট" else "Deposit Account"
+                        } else {
+                            if (isBangla) "টাকা প্রদানের অ্যাকাউন্ট" else "Payment From Account"
+                        },
+                        style = MaterialTheme.typography.labelMedium,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                    Spacer(modifier = Modifier.height(6.dp))
+
+                    val selectedAcc = accounts.find { it.account.id == selectedAccountId }?.account ?: accounts.first().account
+                    ExposedDropdownMenuBox(
+                        expanded = isAccountDropdownExpanded,
+                        onExpandedChange = { isAccountDropdownExpanded = it }
+                    ) {
+                        OutlinedTextField(
+                            value = "${selectedAcc.name} (${Formatters.formatAmount(accounts.find { it.account.id == selectedAcc.id }?.balance ?: 0.0, currencySymbol, useBnDigits)})",
+                            onValueChange = {},
+                            readOnly = true,
+                            trailingIcon = { ExposedDropdownMenuDefaults.TrailingIcon(expanded = isAccountDropdownExpanded) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .menuAnchor(MenuAnchorType.PrimaryNotEditable),
+                            shape = RoundedCornerShape(10.dp)
+                        )
+                        ExposedDropdownMenu(
+                            expanded = isAccountDropdownExpanded,
+                            onDismissRequest = { isAccountDropdownExpanded = false }
+                        ) {
+                            accounts.forEach { accWithBal ->
+                                DropdownMenuItem(
+                                    text = {
+                                        Text("${accWithBal.account.name} • ${Formatters.formatAmount(accWithBal.balance, currencySymbol, useBnDigits)}")
+                                    },
+                                    onClick = {
+                                        selectedAccountId = accWithBal.account.id
+                                        isAccountDropdownExpanded = false
+                                    }
+                                )
+                            }
+                        }
+                    }
+                    Spacer(modifier = Modifier.height(10.dp))
+                }
+
+                OutlinedTextField(
+                    value = note,
+                    onValueChange = { note = it },
+                    label = { Text(if (isBangla) "মন্তব্য / বিবরণ" else "Note") },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(10.dp)
+                )
+
+                Spacer(modifier = Modifier.height(18.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(if (isBangla) "বাতিল" else "Cancel")
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = { onConfirm(selectedAccountId, note.trim()) },
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Color(0xFF15803D),
+                            contentColor = Color.White
+                        ),
+                        modifier = Modifier.testTag("confirm_settle_btn")
+                    ) {
+                        Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(if (isBangla) "পরিশোধ নিশ্চিত করুন" else "Confirm Settle")
+                    }
+                }
+            }
+        }
+    }
+}
+
 @Composable
 fun ContactLedgerContent(
     contact: Contact,
     debts: List<LoanDebt>,
+    accounts: List<AccountWithBalance>,
     isBangla: Boolean,
     useBnDigits: Boolean,
     hideBalances: Boolean,
     currencySymbol: String,
     onRecordPayment: (LoanDebt) -> Unit,
+    onSettleFull: (LoanDebt) -> Unit,
     onDeleteDebt: (LoanDebt) -> Unit,
     onAddEntryClick: () -> Unit,
     onUpdateContactPhone: ((Contact, String) -> Unit)? = null
@@ -973,8 +1670,25 @@ fun ContactLedgerContent(
     val isBn = isBangla
     val context = LocalContext.current
     var showEditPhoneDialog by remember { mutableStateOf(false) }
+    var selectedStatus by remember { mutableStateOf(DebtStatusFilter.ALL) }
 
     val phoneToCall = contact.phone.ifBlank { debts.firstOrNull { it.phone.isNotBlank() }?.phone ?: "" }
+
+    val allCount = debts.size
+    val unpaidCount = debts.count { !it.isSettled }
+    val settledCount = debts.count { it.isSettled }
+
+    val filteredDebts = remember(debts, selectedStatus) {
+        when (selectedStatus) {
+            DebtStatusFilter.ALL -> debts
+            DebtStatusFilter.UNPAID -> debts.filter { !it.isSettled }
+            DebtStatusFilter.PAID -> debts.filter { it.isSettled }
+        }.sortedWith(
+            compareBy<LoanDebt> { it.isSettled }
+                .thenByDescending { it.dueDate ?: Long.MAX_VALUE }
+                .thenByDescending { it.createdAt }
+        )
+    }
 
     if (showEditPhoneDialog) {
         EditContactPhoneDialog(
@@ -993,192 +1707,275 @@ fun ContactLedgerContent(
         contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 100.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        // Contact Header Card
         item {
             Card(
-            modifier = Modifier.fillMaxWidth(),
-            shape = RoundedCornerShape(14.dp),
-            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-            elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-        ) {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp)
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(14.dp),
+                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
+                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(16.dp)
                 ) {
-                    Box(
-                        modifier = Modifier
-                            .size(48.dp)
-                            .clip(RoundedCornerShape(12.dp))
-                            .background(MaterialTheme.colorScheme.primaryContainer),
-                        contentAlignment = Alignment.Center
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(
-                            imageVector = Icons.Default.Person,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onPrimaryContainer,
-                            modifier = Modifier.size(26.dp)
-                        )
-                    }
+                        Box(
+                            modifier = Modifier
+                                .size(48.dp)
+                                .clip(RoundedCornerShape(12.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Person,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onPrimaryContainer,
+                                modifier = Modifier.size(26.dp)
+                            )
+                        }
 
-                    Spacer(modifier = Modifier.width(14.dp))
+                        Spacer(modifier = Modifier.width(14.dp))
 
-                    Column(modifier = Modifier.weight(1f)) {
-                        if (phoneToCall.isNotBlank()) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(6.dp))
-                                    .clickable { ContactUtils.dialPhoneNumber(context, phoneToCall, isBn) }
-                                    .padding(vertical = 2.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Phone,
-                                    contentDescription = null,
-                                    modifier = Modifier.size(15.dp),
-                                    tint = IncomeGreen
-                                )
-                                Spacer(modifier = Modifier.width(4.dp))
+                        Column(modifier = Modifier.weight(1f)) {
+                            Text(
+                                text = contact.name,
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.Bold
+                            )
+                            if (phoneToCall.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(6.dp))
+                                        .clickable { ContactUtils.dialPhoneNumber(context, phoneToCall, isBn) }
+                                        .padding(vertical = 2.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Default.Phone,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp),
+                                        tint = IncomeGreen
+                                    )
+                                    Spacer(modifier = Modifier.width(4.dp))
+                                    Text(
+                                        text = phoneToCall,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = IncomeGreen
+                                    )
+                                }
+                            } else {
                                 Text(
-                                    text = phoneToCall,
-                                    style = MaterialTheme.typography.bodyMedium,
-                                    fontWeight = FontWeight.SemiBold,
-                                    color = IncomeGreen
+                                    text = if (isBn) "কোনো ফোন নম্বর যুক্ত নেই" else "No phone number linked",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
-                        } else {
-                            Text(
-                                text = if (isBn) "কোনো ফোন নম্বর যুক্ত নেই" else "No phone number linked",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
                         }
                     }
-                }
 
-                Spacer(modifier = Modifier.height(14.dp))
+                    Spacer(modifier = Modifier.height(14.dp))
 
-                // Action buttons on Details page: Balanced styling between Call/Add Phone and Add Entry
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(10.dp)
-                ) {
-                    if (phoneToCall.isNotBlank()) {
-                        Button(
-                            onClick = { ContactUtils.dialPhoneNumber(context, phoneToCall, isBn) },
-                            colors = ButtonDefaults.buttonColors(
-                                containerColor = IncomeGreen,
-                                contentColor = Color.White
-                            ),
-                            shape = RoundedCornerShape(12.dp),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                            modifier = Modifier
-                                .weight(1f)
-                                .height(44.dp)
-                                .testTag("contact_details_call_btn")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Call,
-                                contentDescription = if (isBn) "কল করুন" else "Call",
-                                modifier = Modifier.size(18.dp)
-                            )
-                            Spacer(modifier = Modifier.width(6.dp))
-                            Text(
-                                text = if (isBn) "কল করুন" else "Call",
-                                fontSize = 13.sp,
-                                fontWeight = FontWeight.SemiBold
-                            )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        if (phoneToCall.isNotBlank()) {
+                            Button(
+                                onClick = { ContactUtils.dialPhoneNumber(context, phoneToCall, isBn) },
+                                colors = ButtonDefaults.buttonColors(
+                                    containerColor = IncomeGreen,
+                                    contentColor = Color.White
+                                ),
+                                shape = RoundedCornerShape(12.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .testTag("contact_details_call_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Call,
+                                    contentDescription = if (isBn) "কল করুন" else "Call",
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isBn) "কল করুন" else "Call",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
+                        } else if (onUpdateContactPhone != null) {
+                            OutlinedButton(
+                                onClick = { showEditPhoneDialog = true },
+                                shape = RoundedCornerShape(12.dp),
+                                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
+                                colors = ButtonDefaults.outlinedButtonColors(
+                                    contentColor = MaterialTheme.colorScheme.primary
+                                ),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .height(44.dp)
+                                    .testTag("contact_details_add_phone_btn")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.ContactPhone,
+                                    contentDescription = null,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text(
+                                    text = if (isBn) "নম্বর যুক্ত করুন" else "Add Phone",
+                                    fontSize = 13.sp,
+                                    fontWeight = FontWeight.SemiBold
+                                )
+                            }
                         }
-                    } else if (onUpdateContactPhone != null) {
-                        OutlinedButton(
-                            onClick = { showEditPhoneDialog = true },
+
+                        Button(
+                            onClick = onAddEntryClick,
                             shape = RoundedCornerShape(12.dp),
-                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.5f)),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                contentColor = MaterialTheme.colorScheme.primary
+                            colors = ButtonDefaults.buttonColors(
+                                containerColor = MaterialTheme.colorScheme.primary,
+                                contentColor = MaterialTheme.colorScheme.onPrimary
                             ),
                             contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
                             modifier = Modifier
                                 .weight(1f)
                                 .height(44.dp)
-                                .testTag("contact_details_add_phone_btn")
+                                .testTag("contact_details_add_entry_btn")
                         ) {
                             Icon(
-                                imageVector = Icons.Default.ContactPhone,
+                                imageVector = Icons.Default.Add,
                                 contentDescription = null,
                                 modifier = Modifier.size(18.dp)
                             )
                             Spacer(modifier = Modifier.width(6.dp))
                             Text(
-                                text = if (isBn) "নম্বর যুক্ত করুন" else "Add Phone",
+                                text = if (isBn) "এন্ট্রি যোগ করুন" else "Add Entry",
                                 fontSize = 13.sp,
                                 fontWeight = FontWeight.SemiBold
                             )
                         }
                     }
+                }
+            }
+        }
 
-                    Button(
-                        onClick = onAddEntryClick,
-                        shape = RoundedCornerShape(12.dp),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = MaterialTheme.colorScheme.primary,
-                            contentColor = MaterialTheme.colorScheme.onPrimary
-                        ),
-                        contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp),
-                        modifier = Modifier
-                            .weight(1f)
-                            .height(44.dp)
-                            .testTag("contact_details_add_entry_btn")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Add,
-                            contentDescription = null,
-                            modifier = Modifier.size(18.dp)
-                        )
-                        Spacer(modifier = Modifier.width(6.dp))
-                        Text(
-                            text = if (isBn) "এন্ট্রি যোগ করুন" else "Add Entry",
-                            fontSize = 13.sp,
-                            fontWeight = FontWeight.SemiBold
-                        )
+        // Status Filter Tabs inside Contact Ledger
+        item {
+            Surface(
+                shape = RoundedCornerShape(12.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("contact_debt_status_tabs")
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                ) {
+                    DebtStatusFilter.values().forEach { filter ->
+                        val isSelected = selectedStatus == filter
+                        val count = when (filter) {
+                            DebtStatusFilter.ALL -> allCount
+                            DebtStatusFilter.UNPAID -> unpaidCount
+                            DebtStatusFilter.PAID -> settledCount
+                        }
+                        val (badgeBg, badgeTextColor) = when (filter) {
+                            DebtStatusFilter.ALL -> MaterialTheme.colorScheme.primaryContainer to MaterialTheme.colorScheme.onPrimaryContainer
+                            DebtStatusFilter.UNPAID -> Color(0xFFFEF3C7) to Color(0xFFB45309)
+                            DebtStatusFilter.PAID -> Color(0xFFDCFCE7) to Color(0xFF15803D)
+                        }
+
+                        Surface(
+                            onClick = { selectedStatus = filter },
+                            shape = RoundedCornerShape(9.dp),
+                            color = if (isSelected) MaterialTheme.colorScheme.surface else Color.Transparent,
+                            border = if (isSelected) BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant) else null,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("contact_tab_${filter.name.lowercase()}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(vertical = 8.dp, horizontal = 4.dp),
+                                horizontalArrangement = Arrangement.Center,
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Text(
+                                    text = if (isBn) filter.labelBn else filter.labelEn,
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Surface(
+                                    shape = CircleShape,
+                                    color = badgeBg
+                                ) {
+                                    Text(
+                                        text = if (useBnDigits) Formatters.toBanglaDigits(count.toString()) else count.toString(),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.Bold,
+                                        color = badgeTextColor,
+                                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
         }
-    }
 
         item {
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(top = 8.dp, bottom = 4.dp),
+                    .padding(top = 4.dp, bottom = 2.dp),
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 Text(
-                    text = if (isBn) "লেনদেনের ইতিহাস ও বাকি" else "Entries History",
+                    text = if (isBn) "লেনদেনের হিসাবসমূহ" else "Entries List",
                     style = MaterialTheme.typography.titleMedium,
                     fontWeight = FontWeight.Bold
                 )
             }
         }
 
-        if (debts.isEmpty()) {
+        if (filteredDebts.isEmpty()) {
             item {
+                val emptyTitle = when (selectedStatus) {
+                    DebtStatusFilter.ALL -> Localization.getString(Localization.Key.EMPTY_DEBTS, isBn)
+                    DebtStatusFilter.UNPAID -> if (isBn) "কোনো বাকি নেই!" else "No Pending Debts!"
+                    DebtStatusFilter.PAID -> if (isBn) "কোনো পরিশোধিত হিসাব নেই" else "No Settled Debts"
+                }
+                val emptyDesc = when (selectedStatus) {
+                    DebtStatusFilter.ALL -> if (isBn) "এই কন্টাক্টের কোনো হিসাব পাওয়া যায়নি।" else "No debt or loan records found for this contact."
+                    DebtStatusFilter.UNPAID -> if (isBn) "এই কন্টাক্টের সব দেনা-পাওনা পরিশোধ সম্পন্ন হয়েছে।" else "All debt records for this contact are settled."
+                    DebtStatusFilter.PAID -> if (isBn) "এখনো এই কন্টাক্টের কোনো ঋণ বা ধার সম্পূর্ণ পরিশোধ হয়নি।" else "No fully settled records yet for this contact."
+                }
                 EmptyStateView(
-                    icon = Icons.Default.People,
-                    title = Localization.getString(Localization.Key.EMPTY_DEBTS, isBn),
-                    description = if (isBn) "এই কন্টাক্টের কোনো হিসাব পাওয়া যায়নি।" else "No debt or loan records found for this contact.",
+                    icon = if (selectedStatus == DebtStatusFilter.UNPAID) Icons.Default.CheckCircle else Icons.Default.People,
+                    title = emptyTitle,
+                    description = emptyDesc,
                     actionLabel = if (isBn) "+ এন্ট্রি যোগ করুন" else "+ Add Entry",
                     onActionClick = onAddEntryClick
                 )
             }
         } else {
-            items(debts, key = { it.id }) { debt ->
+            items(filteredDebts, key = { it.id }) { debt ->
                 LoanDebtItemCard(
                     debt = debt,
                     isBangla = isBn,
@@ -1186,7 +1983,12 @@ fun ContactLedgerContent(
                     hideBalances = hideBalances,
                     currencySymbol = currencySymbol,
                     onRecordPayment = { onRecordPayment(debt) },
-                    onDelete = { onDeleteDebt(debt) }
+                    onSettleFull = { onSettleFull(debt) },
+                    onDelete = { onDeleteDebt(debt) },
+                    onCallContact = if (phoneToCall.isNotBlank()) {
+                        { ContactUtils.dialPhoneNumber(context, phoneToCall, isBn) }
+                    } else null,
+                    showContactInfo = false
                 )
             }
         }
@@ -1201,16 +2003,21 @@ fun LoanDebtItemCard(
     hideBalances: Boolean,
     currencySymbol: String,
     onRecordPayment: () -> Unit,
-    onDelete: () -> Unit
+    onSettleFull: () -> Unit,
+    onDelete: () -> Unit,
+    onCallContact: (() -> Unit)? = null,
+    showContactInfo: Boolean = true
 ) {
     val isBn = isBangla
     val isOwedToMe = debt.type == DebtType.OWED_TO_ME
     val mainColor = if (isOwedToMe) IncomeGreen else ExpenseRed
-    val progress = if (debt.amount > 0) (debt.paidAmount / debt.amount).toFloat().coerceIn(0f, 1f) else 0f
+    val progress = if (debt.isSettled) 1f else if (debt.amount > 0) (debt.paidAmount / debt.amount).toFloat().coerceIn(0f, 1f) else 0f
 
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("loan_debt_card_${debt.id}"),
+        shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
         elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
@@ -1220,59 +2027,131 @@ fun LoanDebtItemCard(
                 .fillMaxWidth()
                 .padding(16.dp)
         ) {
+            // Direction Badge and Status Indicator Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 val badgeContainer = if (isOwedToMe) Color(0xFFDCFCE7) else Color(0xFFFEE2E2)
                 val badgeText = if (isOwedToMe) Color(0xFF15803D) else Color(0xFFB91C1C)
+                val dirIcon = if (isOwedToMe) Icons.AutoMirrored.Filled.TrendingUp else Icons.AutoMirrored.Filled.TrendingDown
 
                 Surface(
                     shape = RoundedCornerShape(8.dp),
                     color = badgeContainer,
                     border = BorderStroke(1.dp, badgeText.copy(alpha = 0.25f))
                 ) {
-                    Text(
-                        text = if (isOwedToMe) (if (isBn) "দিলাম (পাওনা)" else "Gave Money") else (if (isBn) "নিলাম (দেনা)" else "Took Money"),
-                        style = MaterialTheme.typography.labelMedium,
-                        fontWeight = FontWeight.Bold,
-                        color = badgeText,
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
-                    )
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = dirIcon,
+                            contentDescription = null,
+                            tint = badgeText,
+                            modifier = Modifier.size(14.dp)
+                        )
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text(
+                            text = if (isOwedToMe) (if (isBn) "দিলাম (পাওনা)" else "Gave Money") else (if (isBn) "নিলাম (দেনা)" else "Took Money"),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeText
+                        )
+                    }
                 }
+
+                Spacer(modifier = Modifier.width(8.dp))
+
+                // The Status Badge
+                DebtStatusBadge(
+                    isSettled = debt.isSettled,
+                    paidAmount = debt.paidAmount,
+                    amount = debt.amount,
+                    dueDate = debt.dueDate,
+                    isBangla = isBn,
+                    modifier = Modifier.testTag("debt_status_badge_${debt.id}")
+                )
 
                 Spacer(modifier = Modifier.weight(1f))
 
-                if (debt.isSettled) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = Color(0xFFDCFCE7)
+                IconButton(
+                    onClick = onDelete,
+                    modifier = Modifier
+                        .size(32.dp)
+                        .testTag("delete_debt_${debt.id}")
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Delete,
+                        contentDescription = if (isBn) "মুছুন" else "Delete",
+                        tint = ExpenseRed.copy(alpha = 0.85f),
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+
+            // Contact / Person Row (when showContactInfo is true)
+            if (showContactInfo) {
+                Spacer(modifier = Modifier.height(10.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clip(CircleShape)
+                            .background(MaterialTheme.colorScheme.primaryContainer),
+                        contentAlignment = Alignment.Center
                     ) {
                         Text(
-                            text = Localization.getString(Localization.Key.SETTLE, isBn),
-                            style = MaterialTheme.typography.labelSmall,
+                            text = debt.personName.firstOrNull()?.uppercase() ?: "P",
                             fontWeight = FontWeight.Bold,
-                            color = Color(0xFF15803D),
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            color = MaterialTheme.colorScheme.onPrimaryContainer,
+                            fontSize = 14.sp
                         )
                     }
-                } else {
-                    IconButton(
-                        onClick = onDelete,
-                        modifier = Modifier.size(36.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Delete,
-                            contentDescription = if (isBn) "মুছুন" else "Delete",
-                            tint = ExpenseRed.copy(alpha = 0.90f),
-                            modifier = Modifier.size(20.dp)
+
+                    Spacer(modifier = Modifier.width(10.dp))
+
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = debt.personName,
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
+                        if (debt.phone.isNotBlank()) {
+                            Text(
+                                text = debt.phone,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+
+                    if (debt.phone.isNotBlank() && onCallContact != null) {
+                        IconButton(
+                            onClick = onCallContact,
+                            modifier = Modifier
+                                .size(34.dp)
+                                .testTag("call_debt_person_${debt.id}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Call,
+                                contentDescription = if (isBn) "কল করুন" else "Call",
+                                tint = IncomeGreen,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
                     }
                 }
             }
 
-            Spacer(modifier = Modifier.height(10.dp))
+            Spacer(modifier = Modifier.height(12.dp))
 
+            // Amount Details Row
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1280,18 +2159,18 @@ fun LoanDebtItemCard(
             ) {
                 Column {
                     Text(
-                        text = if (isBn) "বাকি পরিমাণ" else "Remaining",
+                        text = if (debt.isSettled) (if (isBn) "পরিশোধিত পরিমাণ" else "Settled Amount") else (if (isBn) "বাকি পরিমাণ" else "Remaining"),
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     CurrencyAmountText(
-                        amount = debt.remainingAmount,
+                        amount = if (debt.isSettled) debt.amount else debt.remainingAmount,
                         currencySymbol = currencySymbol,
                         useBanglaDigits = useBnDigits,
                         hideBalances = hideBalances,
                         style = MaterialTheme.typography.titleLarge,
                         fontWeight = FontWeight.Bold,
-                        color = mainColor
+                        color = if (debt.isSettled) Color(0xFF15803D) else mainColor
                     )
                 }
 
@@ -1307,35 +2186,13 @@ fun LoanDebtItemCard(
                         useBanglaDigits = useBnDigits,
                         hideBalances = hideBalances,
                         style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.SemiBold
                     )
                 }
             }
 
-            if (debt.dueDate != null) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(Icons.Default.CalendarToday, contentDescription = null, modifier = Modifier.size(12.dp), tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                    Spacer(modifier = Modifier.width(4.dp))
-                    Text(
-                        text = "${if (isBn) "পরিশোধের শেষ তারিখ:" else "Due:"} ${Formatters.formatDate(debt.dueDate, isBn)}",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            if (debt.note.isNotBlank()) {
-                Spacer(modifier = Modifier.height(6.dp))
-                Text(
-                    text = debt.note,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-
+            // Progress Bar Section
             Spacer(modifier = Modifier.height(10.dp))
-
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
@@ -1350,7 +2207,7 @@ fun LoanDebtItemCard(
                     text = "${(progress * 100).toInt()}%",
                     style = MaterialTheme.typography.labelSmall,
                     fontWeight = FontWeight.Bold,
-                    color = mainColor
+                    color = if (debt.isSettled) Color(0xFF15803D) else mainColor
                 )
             }
 
@@ -1362,35 +2219,159 @@ fun LoanDebtItemCard(
                     .fillMaxWidth()
                     .height(6.dp)
                     .clip(RoundedCornerShape(3.dp)),
-                color = mainColor,
+                color = if (debt.isSettled) Color(0xFF15803D) else mainColor,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant
             )
 
-            if (!debt.isSettled) {
-                Spacer(modifier = Modifier.height(12.dp))
-                Button(
-                    onClick = onRecordPayment,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .height(44.dp),
-                    shape = RoundedCornerShape(12.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = mainColor,
-                        contentColor = Color.White
-                    )
+            if (!debt.isSettled && debt.paidAmount > 0.0) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Payment,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                        tint = Color.White
-                    )
-                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
-                        text = Localization.getString(Localization.Key.RECORD_PAYMENT, isBn),
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White
+                        text = "${if (isBn) "পরিশোধ হয়েছে:" else "Paid:"} ${Formatters.formatAmount(debt.paidAmount, currencySymbol, useBnDigits)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = IncomeGreen,
+                        fontWeight = FontWeight.Medium
                     )
+                    Text(
+                        text = "${if (isBn) "বাকি আছে:" else "Left:"} ${Formatters.formatAmount(debt.remainingAmount, currencySymbol, useBnDigits)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = ExpenseRed,
+                        fontWeight = FontWeight.Medium
+                    )
+                }
+            }
+
+            // Due Date & Note
+            if (debt.dueDate != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                val isOverdue = debt.dueDate < System.currentTimeMillis() && !debt.isSettled
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        imageVector = Icons.Default.CalendarToday,
+                        contentDescription = null,
+                        modifier = Modifier.size(13.dp),
+                        tint = if (isOverdue) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Spacer(modifier = Modifier.width(5.dp))
+                    Text(
+                        text = "${if (isBn) "পরিশোধের শেষ তারিখ:" else "Due:"} ${Formatters.formatDate(debt.dueDate, isBn)}${if (isOverdue) " (" + (if (isBn) "মেয়াদ শেষ" else "Overdue") + ")" else ""}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = if (isOverdue) ExpenseRed else MaterialTheme.colorScheme.onSurfaceVariant,
+                        fontWeight = if (isOverdue) FontWeight.Bold else FontWeight.Normal
+                    )
+                }
+            }
+
+            if (debt.note.isNotBlank()) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Text(
+                        text = debt.note,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
+                }
+            }
+
+            // Action Buttons for Unpaid debts
+            if (!debt.isSettled) {
+                Spacer(modifier = Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Button(
+                        onClick = onRecordPayment,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("record_payment_${debt.id}"),
+                        shape = RoundedCornerShape(10.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = mainColor,
+                            contentColor = Color.White
+                        ),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Payment,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color.White
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isBn) "টাকা পরিশোধ লিখুন" else "Record Payment",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    OutlinedButton(
+                        onClick = onSettleFull,
+                        modifier = Modifier
+                            .weight(1f)
+                            .height(42.dp)
+                            .testTag("settle_full_${debt.id}"),
+                        shape = RoundedCornerShape(10.dp),
+                        border = BorderStroke(1.dp, Color(0xFF15803D).copy(alpha = 0.6f)),
+                        colors = ButtonDefaults.outlinedButtonColors(
+                            contentColor = Color(0xFF15803D)
+                        ),
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 6.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                            tint = Color(0xFF15803D)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = if (isBn) "পুরো শোধ" else "Mark Settled",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Bold,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                }
+            } else {
+                Spacer(modifier = Modifier.height(10.dp))
+                Surface(
+                    shape = RoundedCornerShape(8.dp),
+                    color = Color(0xFFDCFCE7).copy(alpha = 0.6f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.CheckCircle,
+                            contentDescription = null,
+                            tint = Color(0xFF15803D),
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = if (isBn) "এই হিসাবটি সম্পূর্ণ পরিশোধিত হয়েছে।" else "This debt is fully paid and settled.",
+                            style = MaterialTheme.typography.bodySmall,
+                            fontWeight = FontWeight.SemiBold,
+                            color = Color(0xFF15803D)
+                        )
+                    }
                 }
             }
         }

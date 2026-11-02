@@ -1,34 +1,33 @@
-# High-Performance Cloud Sync Optimization & Local Preference Isolation
+# Debt Tracking UI Module with Paid/Unpaid Status Indicators
 
-This plan optimizes the Hisab synchronization engine by replacing sequential network queries with parallel coroutines and Firestore `WriteBatch` operations, while isolating all UI preferences (language, dark mode, numeral system) to remain strictly device-local without triggering unnecessary cloud sync or UI status badge changes.
+A specialized, comprehensive UI module for tracking lending and borrowing records in Hisab, featuring dedicated status tabs for 'All', 'Unpaid', and 'Paid' entries, color-coded visual status indicators with progress bars, summary metric cards, and rapid actions including partial repayments, one-tap settlement, and direct contact calling.
 
 ---
 
 ## User Review & Critical Decisions
 
 > [!IMPORTANT]
-> The following user preferences were confirmed in Phase 1 and govern the architectural strategy:
+> The following user preferences were confirmed during Phase 1 clarification and shape this implementation:
 
-- **Confirmed Decision 1 (Device-Local Settings)**: All UI preferences (Language switch, Dark Mode toggle, System Theme toggle, and Numeral System) will remain strictly device-local (persisted in `SharedPreferences` and local `AppDatabase` Room table). Changing these settings will never trigger Firestore network calls, `markSaving()` spinners, or cloud synchronization.
-- **Confirmed Decision 2 (Sync Acceleration Pipeline)**: Full synchronization (`syncAllWithRoom`) will transition from a 12-step sequential waterfall to a high-speed 2-phase parallel pipeline utilizing Kotlin Coroutines (`async`/`awaitAll`) and Firestore `WriteBatch` (up to 500 records per single batch network round-trip), dramatically slashing synchronization latency from 15–25 seconds down to 1–2 seconds.
-- **Confirmed Decision 3 (Responsive Status Feedback)**: The artificial delay in `markSaved()` will be refined from 2,200ms to a crisp 800ms so visual confirmation is snappy and does not give the false perception of prolonged background processing.
+- **Confirmed Decision 1 (Status Filtering Architecture)**: Dedicated tabs for **All**, **Unpaid** (Active/Pending), and **Paid** (Settled) records with live badge counts, allowing users to instantly isolate outstanding loans from cleared records.
+- **Confirmed Decision 2 (Visual Status Representation)**: Color-coded pill badges featuring status icons (Emerald Green with checkmark for *Paid*, Amber with clock for *Unpaid / Partial*, and Red with warning for *Overdue*) accompanied by an animated progress bar displaying repayment percentage.
+- **Confirmed Decision 3 (Primary Card Actions)**: Every debt record item directly provides three high-frequency actions: **Quick Partial Payment**, **Mark as Settled** (one-tap full clearance), and **Call Contact** (direct dialer launch).
 
 ---
 
 ## 1. Overview & Core Concept
 
 ### What It Does
-- **Local Preference Decoupling**: Language switching (বাংলা ↔ English) and Dark Mode toggling will apply immediately in-memory and on-disk without dispatching network operations or changing the top app sync status.
-- **High-Throughput Parallel Synchronization**: Restructures `syncAllWithRoom` to fetch subcollections concurrently while maintaining strict relational foreign-key integrity (Accounts and Categories synced first, followed by Transactions, Budgets, Debts, Goals, Contacts, and Shop Credits in parallel).
-- **Atomic Bulk Uploads (`WriteBatch`)**: When local records need to be pushed to Firestore, writes are combined into atomic batches instead of executing isolated sequential HTTP/gRPC requests in loops.
-- **Direct Authenticated UID Resolution**: Bypasses slow fallback email queries when the user is already authenticated with their primary Firebase UID.
+- **Dedicated Debt Tracking Experience**: Upgrades the lending and borrowing section in Hisab with a dedicated records feed alongside the contact ledger.
+- **Granular Status Segmentation**: Users can switch between **All**, **Unpaid** (remaining balance > 0), and **Paid** (settled records) at any time.
+- **Rich Status Badges & Progress Indicators**: Displays clear visual badges indicating whether a record is *Paid* (100% cleared), *Unpaid* (0% paid), *Partially Paid* (with progress bar), or *Overdue* (past due date).
+- **Direct Operational Controls**: Users can record repayments, settle debts immediately, call borrowers/lenders, or search records without navigating nested layers.
 
 ### Target Audience & Persona
-- Daily personal finance and small business users in Bangladesh who expect zero UI lag when customizing the app's look and feel, and who require fast, reliable ledger synchronization across devices even on mobile data connections (2G/3G/4G).
+- Individuals, freelancers, and shop owners who actively lend or borrow money and need to know exactly who has paid, who owes money, and when payments are overdue.
 
 ### Key Value
-- **Zero-Friction Customization**: Switching themes or languages happens in <16ms with zero network traffic.
-- **Fast Cloud Reconciliation**: Data sync is up to 5x faster, consuming less mobile battery and data bandwidth.
+- Replaces ambiguous debt lists with unambiguous visual status states, saving time and preventing forgotten receivables.
 
 ---
 
@@ -36,135 +35,123 @@ This plan optimizes the Hisab synchronization engine by replacing sequential net
 
 ### Key User Flows
 
-1. **Instant Theme & Language Toggle**:
-   - User navigates to Settings or taps the language / theme toggle.
-   - Screen theme (Light/Dark) or UI locale (বাংলা/English) toggles immediately with fluid animated transitions.
-   - The top header `RealTimeStatusBadge` remains undisturbed in its normal synchronized state without displaying "সেভ হচ্ছে..." ("Saving...").
+1. **Browsing Debts by Status**:
+   - The user opens the **Lending & Borrowing** tab in the Debts screen.
+   - At the top, three summary metric cards display **Total Receivable (Unpaid)**, **Total Payable (Unpaid)**, and **Total Settled**.
+   - Below the metrics, dedicated segmented tabs allow switching between:
+     - **All Records** `[ সব (12) ]`
+     - **Unpaid** `[ অপরিশোধিত (8) ]`
+     - **Paid** `[ পরিশোধিত (4) ]`
+   - A secondary sub-filter row allows filtering by type: **All Types**, **Lent (Gave / পাওনা)**, and **Borrowed (Took / দেনা)**.
 
-2. **Snappy Manual or Background Synchronization**:
-   - User opens the app, reconnects to Wi-Fi/Mobile Data, or taps the Sync badge in the header.
-   - The status badge transitions to `Syncing` (rotating emerald indicator).
-   - All collections synchronize concurrently in 1–2 seconds.
-   - The badge transitions to `Synced` with a subtle checkmark and auto-dismisses smoothly.
+2. **Inspecting Debt Status & Repayment Progress**:
+   - Each debt card displays:
+     - Person name, avatar initial, and linked phone number.
+     - Debt direction pill (e.g., *Gave Money / পাওনা* in green, *Took Money / দেনা* in red).
+     - **Status Badge**:
+       - *Paid*: Green background, CheckCircle icon, "পরিশোধিত" (Paid).
+       - *Unpaid*: Amber/Yellow background, Schedule icon, "বাকি" (Unpaid).
+       - *Partially Paid*: Blue/Amber badge with "আংশিক (50% পরিশোধিত)".
+       - *Overdue*: Red badge with Warning icon if due date has passed.
+     - Large typography for remaining balance alongside original total amount.
+     - Repayment progress bar with percentage indicator.
+     - Due date tag with calendar icon if scheduled.
 
-3. **Transaction Creation & Real-Time Upload**:
-   - Creating or editing an expense, income, or transfer immediately updates local Room balances and the transaction feed.
-   - The transaction is uploaded asynchronously in the background.
-   - The save confirmation pill provides an 800ms visual cue before returning to steady-state `Synced`.
+3. **Executing Primary Actions**:
+   - **Quick Partial Payment**: Tapping "Record Payment" opens the repayment sheet to log an installment with account deduction.
+   - **One-Tap Mark as Settled**: Tapping "Mark as Settled" allows the user to settle the remaining balance in full with account confirmation.
+   - **Call Contact**: Tapping the phone icon immediately triggers the phone dialer.
+
+4. **Viewing Within Contact Ledger**:
+   - When drilling into a specific contact's ledger, the same All / Unpaid / Paid tabs and status badges are available to audit individual transaction history.
 
 ### Visual Identity & Theme
-- **Color Palette**: Retains the rich Emerald (`#0F766E`) and Jade (`#10B981`) primary palette with clean M3 container surfaces and dark-slate backgrounds (`#0F172A`) for dark mode.
-- **Badge Transitions**: Seamless `AnimatedContent` crossfades between Synced, Syncing, and Saved states without abrupt layout shifts in the `DashboardHeader`.
+- **Paid Badge**: Container `#DCFCE7`, Content `#15803D`, Icon `Icons.Default.CheckCircle`.
+- **Unpaid Badge**: Container `#FEF3C7`, Content `#B45309`, Icon `Icons.Default.Schedule`.
+- **Partial Badge**: Container `#E0F2FE`, Content `#0369A1`, Icon `Icons.Default.Pending`.
+- **Overdue Badge**: Container `#FEE2E2`, Content `#B91C1C`, Icon `Icons.Default.Warning`.
+- **Progress Track**: Elevated M3 rounded bar with smooth progress interpolation.
 
 ---
 
 ## 3. Key Product Decisions & Trade-Offs
 
-### Decision 1: Device-Local UI Preferences Isolation
-- **Chosen Approach**: Remove Firestore network dispatch (`firestoreRepository.saveUserSettings(...)`) and `markSaving()` from `updateSettings(...)`. Settings are saved exclusively to Android `SharedPreferences` and local SQLite (`Room`). Remove `syncUserSettings` from `syncAllWithRoom`.
-- **Why**: Language, numeral format, and dark mode are personal device preferences (e.g. a user might prefer dark mode on a tablet and light mode on a phone). Transmitting them across the wire slows down the UI, triggers unnecessary Firestore read/write operations, and pollutes the sync state badge.
-- **Alternatives Considered**: Debouncing network requests (still causes unwanted cloud writes and status changes).
+### Decision 1: Dual View Presentation (Direct Records Feed + Contact Grouping)
+- **Chosen Approach**: Provide a toggle between **"All Entries" (সব এন্ট্রি)** and **"By Contact" (কন্টাক্ট অনুসারে)** in the Lending & Borrowing view, with the status tabs (All / Unpaid / Paid) filtering both views seamlessly.
+- **Why**: Many users want to see recent unpaid debts directly chronologically without clicking into individual contacts, while others prefer viewing totals grouped by person.
+- **Alternatives Considered**: Only showing contacts (requires too many clicks to see individual debt statuses).
 
-### Decision 2: 2-Phase Directed Concurrency in `syncAllWithRoom`
-- **Chosen Approach**:
-  - **Phase 1 (Parent Dependencies)**: Run `syncAccounts`, `syncCategories`, and `syncVendors` in parallel using `async { ... }`. Wait for all 3 to resolve so foreign-key rows exist locally in Room.
-  - **Phase 2 (Dependent Ledger Tables)**: Run `syncTransactions`, `syncBudgets`, `syncSavingsGoals`, `syncContacts`, `syncLoansDebts`, `syncLoanRepayments`, `syncShopCredit`, and `syncRecurringRules` in parallel via `awaitAll()`.
-- **Why**: Maintains Room foreign-key integrity (transactions cannot be inserted before accounts/categories exist) while collapsing 12 sequential network round-trips into just 2 concurrent phases.
-- **Alternatives Considered**: Completely unconstrained parallel sync (causes SQLite foreign-key constraint violations); keeping sequential sync (too slow).
+### Decision 2: One-Tap Settle Flow with Account Selector
+- **Chosen Approach**: When the user taps "Mark as Settled" on an unpaid debt, show a quick confirmation sheet/dialog allowing selection of the receiving/paying account, then record the remaining balance as a full repayment.
+- **Why**: Keeps double-entry bookkeeping accurate (updating account balance and creating a transaction record) while requiring only 2 taps from the user.
+- **Alternatives Considered**: Settle without selecting an account (causes account balances to fall out of sync).
 
-### Decision 3: Firestore `WriteBatch` for Bulk Local-to-Cloud Uploads
-- **Chosen Approach**: In all sync methods (transactions, accounts, budgets, etc.), accumulate un-synced local records into `firestore.batch()` and commit them in single atomic roundtrips (chunked at 450 items to stay safely within Firestore's 500-write limit).
-- **Why**: Reduces 50 individual HTTP/gRPC requests down to a single network call, decreasing network latency from 15,000ms to ~300ms.
-- **Alternatives Considered**: Single document writes with `awaitTask()` (current approach, causes massive lag).
-
-### Decision 4: Priority UID Direct Lookup
-- **Chosen Approach**: If `FirebaseAuth.getInstance().currentUser?.uid` is non-empty, use that UID directly for collection references (`users/{uid}/...`). Only query candidate email indexes if the authenticated user has zero documents in their primary path.
-- **Why**: Eliminates 5–8 second timeout penalties caused by querying non-existent or restricted collection paths.
+### Decision 3: Overdue Detection Logic
+- **Chosen Approach**: Dynamically evaluate `debt.dueDate != null && debt.dueDate < System.currentTimeMillis() && !debt.isSettled` to show an urgent Overdue badge.
+- **Why**: Helps users prioritize collecting payments that are past due.
 
 ---
 
-## 4. Technical Architecture & Data Strategy
+## 4. Technical Architecture & Component Mapping
 
-### System Architecture Diagram
+### Architecture Diagram
 
 ```
 ┌────────────────────────────────────────────────────────────────────────┐
-│                        Jetpack Compose UI Layer                        │
-│   ┌───────────────────────────┐      ┌─────────────────────────────┐   │
-│   │ SettingsScreen / Switches │      │ Dashboard / TopAppBar Badge │   │
-│   │  (Language / Dark Mode)   │      │ (Synced / Syncing / Saved)  │   │
-│   └─────────────┬─────────────┘      └──────────────▲──────────────┘   │
-└─────────────────┼───────────────────────────────────┼──────────────────┘
-                  │ Local Only                        │ Reactive Status
-                  │ (No Network Call)                 │
-┌─────────────────▼───────────────────────────────────┴──────────────────┐
-│                             HisabViewModel                             │
-│   ┌───────────────────────────┐      ┌─────────────────────────────┐   │
-│   │   updateSettings()        │      │    syncWithFirestore()      │   │
-│   │ • SharedPreferences Write │      │ • AppSyncStatus.Syncing     │   │
-│   │ • Room SQLite Write       │      │ • 2-Phase Concurrency       │   │
-│   │ • NO markSaving / No Cloud│      │ • 800ms Snappy markSaved()  │   │
-│   └───────────────────────────┘      └──────────────┬──────────────┘   │
-└─────────────────────────────────────────────────────┼──────────────────┘
-                                                      │
-┌─────────────────────────────────────────────────────▼──────────────────┐
-│                   FirestoreRepositoryImpl Engine                       │
+│                        DebtsScreen (Lending & Borrowing)               │
 │                                                                        │
 │   ┌────────────────────────────────────────────────────────────────┐   │
-│   │ Phase 1 Concurrency: Parent Entities                           │   │
-│   │ ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   │   │
-│   │ │  syncAccounts  │   │ syncCategories │   │  syncVendors   │   │   │
-│   │ └────────────────┘   └────────────────┘   └────────────────┘   │   │
-│   └────────────────────────────────┬───────────────────────────────┘   │
-│                                    ▼                                   │
+│   │ Top Balance Cards: Total Receivable | Total Payable | Settled   │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
 │   ┌────────────────────────────────────────────────────────────────┐   │
-│   │ Phase 2 Concurrency: Dependent Data (with WriteBatch)          │   │
-│   │ ┌────────────────┐   ┌────────────────┐   ┌────────────────┐   │   │
-│   │ │syncTransactions│   │  syncBudgets   │   │syncSavingsGoals│   │   │
-│   │ ├────────────────┤   ├────────────────┤   ├────────────────┤   │   │
-│   │ │  syncContacts  │   │ syncLoansDebts │   │ syncRepayments │   │   │
-│   │ ├────────────────┤   ├────────────────┤   ├────────────────┤   │   │
-│   │ │ syncShopCredit │   │syncRecurringRul│   │ (Settings OMIT)│   │   │
-│   │ └────────────────┘   └────────────────┘   └────────────────┘   │   │
-│   └────────────────────────────────┬───────────────────────────────┘   │
-└────────────────────────────────────┼───────────────────────────────────┘
+│   │ Status Segmented Tabs: [ All (N) ]  [ Unpaid (N) ] [ Paid (N) ]│   │
+│   └────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │ Type Filter Chips:  (● All)   (↗ Gave / পাওনা)  (↙ Took / দেনা) │   │
+│   │ View Mode Switch:   [ Individual Entries | By Contact ]        │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+│                                                                        │
+│   ┌────────────────────────────────────────────────────────────────┐   │
+│   │ LazyColumn: LoanDebtItemCard List (Filtered by Status & Type)  │   │
+│   │  ┌──────────────────────────────────────────────────────────┐  │   │
+│   │  │ LoanDebtItemCard                                         │  │   │
+│   │  │ • StatusBadge (Paid / Unpaid / Partial / Overdue)        │  │   │
+│   │  │ • Repayment ProgressBar (0% - 100%)                      │  │   │
+│   │  │ • Amounts: Remaining (Primary) vs Original Total         │  │   │
+│   │  │ • Action Row: [Record Payment] [Settle Full] [Call] [⋯] │  │   │
+│   │  └──────────────────────────────────────────────────────────┘  │   │
+│   └────────────────────────────────────────────────────────────────┘   │
+└────────────────────────────────────────────────────────────────────────┘
                                      │
-           ┌─────────────────────────┴─────────────────────────┐
-           ▼                                                   ▼
-┌──────────────────────┐                           ┌─────────────────────┐
-│ Room Database (Disk) │                           │ Firebase Cloud      │
-│ • Local First        │                           │ • Firestore DB      │
-│ • Zero UI Latency    │                           │ • WriteBatch Upload │
-└──────────────────────┘                           └─────────────────────┘
+                                     ▼
+                        ┌─────────────────────────┐
+                        │     HisabViewModel      │
+                        │ • loansDebts (Flow)     │
+                        │ • recordDebtPayment()   │
+                        │ • settleFullDebt()      │
+                        │ • deleteLoanDebt()      │
+                        └─────────────────────────┘
 ```
 
-### Data Model & State Boundaries
+### Component & State Mapping
 
-| Data Domain | Storage Mechanism | Cloud Sync Behavior | Trigger / State |
-| :--- | :--- | :--- | :--- |
-| **Language (bn/en)** | `SharedPreferences` + Room | **Never Synced** (Strictly Local) | Immediate UI Recomposition; no sync badge |
-| **Dark / System Theme** | `SharedPreferences` + Room | **Never Synced** (Strictly Local) | Immediate UI Recomposition; no sync badge |
-| **Numeral System** | `SharedPreferences` + Room | **Never Synced** (Strictly Local) | Immediate UI Recomposition; no sync badge |
-| **Transactions** | Room SQLite $\leftrightarrow$ Firestore | **Instant Async + Full Bi-directional** | Immediate async upload on add/edit/delete; parallel bulk sync on refresh |
-| **Accounts & Balances**| Room SQLite $\leftrightarrow$ Firestore | **Phase 1 Parallel Bi-directional** | Guaranteed precedence before dependent transaction mapping |
-| **Categories & Vendors**| Room SQLite $\leftrightarrow$ Firestore | **Phase 1 Parallel Bi-directional** | Guaranteed precedence before dependent transaction mapping |
-| **Budgets & Goals** | Room SQLite $\leftrightarrow$ Firestore | **Phase 2 Parallel Bi-directional** | WriteBatch atomic upload for un-synced items |
-| **Debts & Shop Credit**| Room SQLite $\leftrightarrow$ Firestore | **Phase 2 Parallel Bi-directional** | WriteBatch atomic upload for un-synced items |
+1. **`DebtStatusFilter` Enum**:
+   - `ALL`, `UNPAID`, `PAID`
+   - Filter predicate:
+     - `ALL`: all debts
+     - `UNPAID`: `!it.isSettled`
+     - `PAID`: `it.isSettled`
 
-### Interactive Component & State Mapping
+2. **`DebtStatusBadge` Composable**:
+   - Renders color-coded status chips based on `debt.isSettled`, `debt.paidAmount`, and `debt.dueDate`.
 
-1. **`HisabViewModel.updateSettings`**:
-   - Update `appPrefs` synchronously.
-   - Update `_settings.value` StateFlow.
-   - Persist to Room `hisabRepository.updateSettings(target)` in IO coroutine.
-   - **Do NOT** call `markSaving()`, `markSaved()`, or `firestoreRepository.saveUserSettings(...)`.
+3. **`LoanDebtItemCard` Enhancements**:
+   - Displays status badge, progress bar, formatted remaining amount, due date tags, quick call button, and action buttons (`Record Payment` and `Mark as Settled`).
 
-2. **`FirestoreRepositoryImpl.syncAllWithRoom`**:
-   - Resolve primary UID directly (`FirebaseAuth.getInstance().currentUser?.uid`).
-   - Run Phase 1 coroutine block (`syncAccounts`, `syncCategories`, `syncVendors`).
-   - Run Phase 2 coroutine block (`syncTransactions`, `syncBudgets`, `syncSavingsGoals`, `syncContacts`, `syncLoansDebts`, `syncLoanRepayments`, `syncShopCredit`, `syncRecurringRules`).
-   - Utilize `firestore.batch()` for any local items missing on remote.
-   - Return total synchronized item count.
+4. **`SettleFullDebtDialog` Composable**:
+   - Allows fast 1-tap or account-confirmed settlement of remaining balance.
 
-3. **`HisabViewModel.markSaved`**:
-   - Reduce delay from 2200ms to 800ms before returning to `AppSyncStatus.Synced()`.
+5. **`ContactLedgerContent` Status Support**:
+   - Adds the same status tabs inside the individual contact details view.
