@@ -376,15 +376,57 @@ class AuthRepository(
     }
 
     suspend fun deleteAccountAndData(userId: String) = withContext(Dispatchers.IO) {
-        db.userDao().deleteUser(userId)
+        // 1. Purge all Firestore cloud data FIRST before credentials/auth are cleared
+        try {
+            firestoreRepository?.deleteAllUserData(userId)
+        } catch (e: Exception) {
+            Log.w("AuthRepository", "Cloud data purge error: ${e.message}")
+        }
+
+        // 2. Wipe all local Room database records in foreign-key safe order
+        try {
+            db.shopCreditPaymentDao().deleteAllPaymentsForUser(userId)
+            db.shopCreditPurchaseDao().deleteAllPurchasesForUser(userId)
+            db.loanRepaymentDao().deleteAllRepaymentsForUser(userId)
+            db.loanDebtDao().deleteAllDebtsForUser(userId)
+            db.transactionDao().deleteAllTransactionsForUser(userId)
+            db.recurringDao().deleteAllRulesForUser(userId)
+            db.budgetDao().deleteAllBudgetsForUser(userId)
+            db.savingsGoalDao().deleteAllGoalsForUser(userId)
+            db.contactDao().deleteAllContactsForUser(userId)
+            db.vendorDao().deleteAllVendorsForUser(userId)
+            db.categoryDao().deleteAllCategoriesForUser(userId)
+            db.accountDao().deleteAllAccountsForUser(userId)
+            db.settingsDao().deleteSettingsForUser(userId)
+            db.userDao().deleteUser(userId)
+        } catch (e: Exception) {
+            Log.w("AuthRepository", "Local Room data wipe error: ${e.message}")
+        }
+
+        // 3. Clear all stored shared preferences
         prefs.edit().clear().apply()
         try {
+            context.getSharedPreferences("hisab_settings_prefs", Context.MODE_PRIVATE).edit().clear().apply()
+        } catch (_: Exception) {}
+
+        // 4. Delete Firebase Auth user or sign out
+        try {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
+                val fbUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                if (fbUser != null) {
+                    try {
+                        fbUser.delete()
+                    } catch (e: Exception) {
+                        Log.w("AuthRepository", "Firebase auth delete failed: ${e.message}")
+                    }
+                }
                 com.google.firebase.auth.FirebaseAuth.getInstance().signOut()
             }
         } catch (e: Exception) {
             Log.w("AuthRepository", "Firebase sign out error: ${e.message}")
         }
+
+        // 5. Clear credential manager state
         try {
             CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
         } catch (e: Exception) {

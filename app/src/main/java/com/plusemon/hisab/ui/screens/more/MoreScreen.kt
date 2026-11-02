@@ -1,5 +1,6 @@
 package com.plusemon.hisab.ui.screens.more
 
+import android.widget.Toast
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -20,40 +21,52 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.BarChart
 import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.CloudSync
-import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.DarkMode
+import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.Language
+import androidx.compose.material.icons.filled.LightMode
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.Repeat
-import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.SystemUpdate
+import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.FilledTonalIconButton
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButtonDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.plusemon.hisab.data.model.AppSyncStatus
-import com.plusemon.hisab.domain.util.Formatters
+import androidx.compose.ui.window.Dialog
+import com.plusemon.hisab.domain.util.Localization
 import com.plusemon.hisab.domain.util.VersionUtils
+import com.plusemon.hisab.ui.components.DeleteConfirmationDialog
 import com.plusemon.hisab.ui.components.UserAvatar
+import com.plusemon.hisab.ui.theme.ExpenseRed
 import com.plusemon.hisab.ui.viewmodel.HisabViewModel
 
 @Composable
@@ -63,16 +76,48 @@ fun MoreScreen(
     onNavigateToAccounts: () -> Unit,
     onNavigateToCategories: () -> Unit,
     onNavigateToRecurring: () -> Unit,
-    onNavigateToSettings: () -> Unit,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     val settings by viewModel.settings.collectAsState()
     val isBn = settings.language == "bn"
     val currentUser by viewModel.currentUser.collectAsState()
-    val syncStatus by viewModel.appSyncStatus.collectAsState()
     val accounts by viewModel.accountsWithBalances.collectAsState()
     val categories by viewModel.categories.collectAsState()
     val recurringRules by viewModel.recurringRules.collectAsState()
+
+    var showPinDialog by remember { mutableStateOf(false) }
+    var showDeleteAccountDialog by remember { mutableStateOf(false) }
+
+    // PIN Setup Dialog
+    if (showPinDialog) {
+        SetPinDialog(
+            isBangla = isBn,
+            onDismiss = { showPinDialog = false },
+            onSetPin = { pin ->
+                viewModel.setPin(pin)
+                showPinDialog = false
+                Toast.makeText(context, if (isBn) "পিন সুরক্ষা চালু হয়েছে" else "PIN lock enabled", Toast.LENGTH_SHORT).show()
+            }
+        )
+    }
+
+    // Delete Account Confirmation Dialog (purges all cloud Firestore & local Room data)
+    if (showDeleteAccountDialog) {
+        DeleteConfirmationDialog(
+            title = Localization.getString(Localization.Key.DELETE_ACCOUNT, isBn),
+            message = Localization.getString(Localization.Key.DELETE_ACCOUNT_CONFIRM, isBn),
+            itemDetail = currentUser?.email ?: (if (isBn) "বর্তমান অ্যাকাউন্ট" else "Current Account"),
+            isBangla = isBn,
+            onConfirm = {
+                viewModel.deleteAccount()
+                showDeleteAccountDialog = false
+            },
+            onDismiss = {
+                showDeleteAccountDialog = false
+            }
+        )
+    }
 
     Column(
         modifier = modifier
@@ -97,11 +142,10 @@ fun MoreScreen(
             )
         }
 
-        // Profile Card with Edit/Settings shortcut
+        // Profile Card
         Card(
             modifier = Modifier
                 .fillMaxWidth()
-                .clickable { onNavigateToSettings() }
                 .testTag("more_profile_banner"),
             shape = RoundedCornerShape(16.dp),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -159,24 +203,6 @@ fun MoreScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis
-                    )
-                }
-
-                // Edit / Settings shortcut button
-                FilledTonalIconButton(
-                    onClick = onNavigateToSettings,
-                    modifier = Modifier
-                        .size(38.dp)
-                        .testTag("more_profile_edit_btn"),
-                    colors = IconButtonDefaults.filledTonalIconButtonColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.6f),
-                        contentColor = MaterialTheme.colorScheme.primary
-                    )
-                ) {
-                    Icon(
-                        imageVector = Icons.Default.Edit,
-                        contentDescription = if (isBn) "সেটিংস খুলুন" else "Edit Settings",
-                        modifier = Modifier.size(18.dp)
                     )
                 }
             }
@@ -269,9 +295,9 @@ fun MoreScreen(
 
         Spacer(modifier = Modifier.height(18.dp))
 
-        // SECTION 3: APP SETTINGS & CLOUD (Clean navigation tiles without duplicate controls)
+        // SECTION 3: PREFERENCES & SECURITY (Moved directly from Settings)
         SectionHeader(
-            title = if (isBn) "অ্যাপ সেটিংস ও ক্লাউড" else "Settings & Cloud"
+            title = if (isBn) "পছন্দসমূহ ও নিরাপত্তা" else "Preferences & Security"
         )
 
         Card(
@@ -281,15 +307,13 @@ fun MoreScreen(
             border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
         ) {
             Column {
-                // Navigation tile to Settings & Security
-                MoreTileItem(
-                    icon = Icons.Default.Settings,
-                    iconBgColor = MaterialTheme.colorScheme.secondaryContainer,
-                    iconTint = MaterialTheme.colorScheme.onSecondaryContainer,
-                    title = if (isBn) "সেটিংস ও নিরাপত্তা" else "Settings & Security",
-                    subtitle = if (isBn) "ভাষা, ডার্ক মোড, পিন কোড ও পছন্দসমূহ" else "Language, dark mode, PIN protection & preferences",
-                    onClick = onNavigateToSettings,
-                    testTag = "more_settings_tile"
+                // Language Selection
+                SettingsActionRowItem(
+                    icon = Icons.Default.Language,
+                    title = Localization.getString(Localization.Key.LANGUAGE, isBn),
+                    value = if (isBn) "বাংলা" else "English",
+                    onClick = { viewModel.toggleLanguage() },
+                    testTag = "more_language_tile"
                 )
 
                 HorizontalDivider(
@@ -297,36 +321,173 @@ fun MoreScreen(
                     color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
                 )
 
-                // Cloud Backup & Sync (simple list tile showing last sync time, tapping initiates manual sync)
-                val syncSubtitle = when (syncStatus) {
-                    is AppSyncStatus.Syncing -> if (isBn) "ক্লাউড সিঙ্ক চলছে..." else "Syncing with cloud..."
-                    is AppSyncStatus.Synced -> {
-                        val timeStr = Formatters.formatTime((syncStatus as AppSyncStatus.Synced).timestamp)
-                        if (isBn) "সর্বশেষ সিঙ্ক: $timeStr • ট্যাপ করে সিঙ্ক করুন" else "Last synced: $timeStr • Tap to sync"
+                // Dark Mode Switch
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { viewModel.toggleDarkMode() }
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("more_dark_mode_tile"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = if (settings.isDarkMode) Icons.Default.DarkMode else Icons.Default.LightMode,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Text(
+                            text = Localization.getString(Localization.Key.DARK_MODE, isBn),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
                     }
-                    is AppSyncStatus.Saved -> {
-                        val timeStr = Formatters.formatTime((syncStatus as AppSyncStatus.Saved).timestamp)
-                        if (isBn) "সর্বশেষ সংরক্ষণ: $timeStr • ট্যাপ করে সিঙ্ক করুন" else "Last saved: $timeStr • Tap to sync"
-                    }
-                    is AppSyncStatus.Error -> {
-                        if (isBn) "সিঙ্কে সমস্যা হয়েছে • ট্যাপ করে পুনরায় চেষ্টা করুন" else "Sync failed • Tap to retry"
-                    }
-                    else -> if (isBn) "ক্লাউড ব্যাকআপ • ট্যাপ করে সিঙ্ক করুন" else "Cloud backup • Tap to sync now"
+
+                    Switch(
+                        checked = settings.isDarkMode,
+                        onCheckedChange = { viewModel.toggleDarkMode() }
+                    )
                 }
 
-                MoreTileItem(
-                    icon = Icons.Default.CloudSync,
-                    iconBgColor = Color(0xFF0F766E).copy(alpha = 0.14f),
-                    iconTint = Color(0xFF0F766E),
-                    title = if (isBn) "ক্লাউড ব্যাকআপ ও সিঙ্ক" else "Cloud Backup & Sync",
-                    subtitle = syncSubtitle,
-                    onClick = { viewModel.triggerManualSync() },
-                    testTag = "more_sync_tile"
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
+                // PIN Code Protection Switch
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                        .testTag("more_pin_tile"),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Lock,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(22.dp)
+                            )
+                        }
+                        Spacer(modifier = Modifier.width(14.dp))
+                        Text(
+                            text = Localization.getString(Localization.Key.PIN_LOCK, isBn),
+                            style = MaterialTheme.typography.bodyLarge,
+                            fontWeight = FontWeight.SemiBold,
+                            color = MaterialTheme.colorScheme.onSurface
+                        )
+                    }
+
+                    Switch(
+                        checked = settings.pinEnabled,
+                        onCheckedChange = { isChecked ->
+                            if (isChecked) {
+                                showPinDialog = true
+                            } else {
+                                viewModel.disablePin()
+                            }
+                        }
+                    )
+                }
+            }
+        }
+
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // SECTION 4: APP & UPDATES
+        SectionHeader(
+            title = if (isBn) "অ্যাপ ও সংস্করণ" else "App & Updates"
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f))
+        ) {
+            Column {
+                SettingsActionRowItem(
+                    icon = Icons.Default.SystemUpdate,
+                    title = Localization.getString(Localization.Key.CHECK_UPDATES, isBn),
+                    value = VersionUtils.formatDisplayVersion(com.plusemon.hisab.BuildConfig.VERSION_NAME),
+                    onClick = { viewModel.checkForUpdates(isManual = true) },
+                    testTag = "more_updates_tile"
                 )
             }
         }
 
-        Spacer(modifier = Modifier.height(24.dp))
+        Spacer(modifier = Modifier.height(18.dp))
+
+        // SECTION 5: DANGER ZONE & ACCOUNT (Only Delete Account & Sign Out)
+        SectionHeader(
+            title = if (isBn) "বিপদজনক জোন ও অ্যাকাউন্ট" else "Danger Zone & Account",
+            titleColor = ExpenseRed
+        )
+
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.35f))
+        ) {
+            Column {
+                // Delete Account & Data
+                SettingsActionRowItem(
+                    icon = Icons.Default.DeleteForever,
+                    title = Localization.getString(Localization.Key.DELETE_ACCOUNT, isBn),
+                    titleColor = ExpenseRed,
+                    iconBgColor = ExpenseRed.copy(alpha = 0.12f),
+                    iconTint = ExpenseRed,
+                    onClick = { showDeleteAccountDialog = true },
+                    testTag = "more_delete_account_tile"
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
+                // Sign Out / Log Out
+                SettingsActionRowItem(
+                    icon = Icons.AutoMirrored.Filled.ExitToApp,
+                    title = Localization.getString(Localization.Key.SIGN_OUT, isBn),
+                    titleColor = ExpenseRed,
+                    iconBgColor = ExpenseRed.copy(alpha = 0.12f),
+                    iconTint = ExpenseRed,
+                    onClick = { viewModel.signOut() },
+                    testTag = "more_sign_out_tile"
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(28.dp))
 
         // App Footer / Version Info
         Column(
@@ -350,11 +511,14 @@ fun MoreScreen(
 }
 
 @Composable
-private fun SectionHeader(title: String) {
+private fun SectionHeader(
+    title: String,
+    titleColor: Color = MaterialTheme.colorScheme.primary
+) {
     Text(
         text = title,
         style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
+        color = titleColor,
         fontWeight = FontWeight.Bold,
         modifier = Modifier.padding(start = 2.dp, top = 6.dp, bottom = 8.dp)
     )
@@ -435,5 +599,156 @@ private fun MoreTileItem(
             tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
             modifier = Modifier.size(20.dp)
         )
+    }
+}
+
+@Composable
+private fun SettingsActionRowItem(
+    icon: ImageVector,
+    title: String,
+    value: String? = null,
+    titleColor: Color = MaterialTheme.colorScheme.onSurface,
+    iconBgColor: Color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.5f),
+    iconTint: Color = MaterialTheme.colorScheme.primary,
+    onClick: () -> Unit,
+    testTag: String
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clickable { onClick() }
+            .padding(horizontal = 16.dp, vertical = 14.dp)
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            modifier = Modifier.weight(1f)
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(40.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(iconBgColor),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = icon,
+                    contentDescription = null,
+                    tint = iconTint,
+                    modifier = Modifier.size(22.dp)
+                )
+            }
+
+            Spacer(modifier = Modifier.width(14.dp))
+
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = titleColor
+            )
+        }
+
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (value != null) {
+                Text(
+                    text = value,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(modifier = Modifier.width(6.dp))
+            }
+            Icon(
+                imageVector = Icons.Default.ChevronRight,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f),
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
+private fun SetPinDialog(
+    isBangla: Boolean,
+    onDismiss: () -> Unit,
+    onSetPin: (String) -> Unit
+) {
+    var pin by remember { mutableStateOf("") }
+    var confirmPin by remember { mutableStateOf("") }
+    var isError by remember { mutableStateOf(false) }
+
+    Dialog(onDismissRequest = onDismiss) {
+        Card(
+            shape = RoundedCornerShape(20.dp),
+            modifier = Modifier.fillMaxWidth().padding(8.dp),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
+            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+        ) {
+            Column(modifier = Modifier.fillMaxWidth().padding(20.dp)) {
+                Text(
+                    text = Localization.getString(Localization.Key.SET_PIN, isBangla),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Spacer(modifier = Modifier.height(14.dp))
+
+                OutlinedTextField(
+                    value = pin,
+                    onValueChange = { if (it.length <= 4 && it.all { ch -> ch.isDigit() }) pin = it },
+                    label = { Text(if (isBangla) "৪ ডিজিটের পিন" else "4-Digit PIN") },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                OutlinedTextField(
+                    value = confirmPin,
+                    onValueChange = { if (it.length <= 4 && it.all { ch -> ch.isDigit() }) confirmPin = it },
+                    label = { Text(Localization.getString(Localization.Key.CONFIRM_PIN, isBangla)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier.fillMaxWidth()
+                )
+
+                if (isError) {
+                    Text(
+                        text = if (isBangla) "পিন দুটি মিলছে না বা ৪ ডিজিট নয়" else "PINs do not match or are not 4 digits",
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodySmall,
+                        modifier = Modifier.padding(top = 6.dp)
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(16.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.End
+                ) {
+                    TextButton(onClick = onDismiss) {
+                        Text(Localization.getString(Localization.Key.CANCEL, isBangla))
+                    }
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Button(
+                        onClick = {
+                            if (pin.length == 4 && pin == confirmPin) {
+                                onSetPin(pin)
+                            } else {
+                                isError = true
+                            }
+                        },
+                        shape = RoundedCornerShape(12.dp)
+                    ) {
+                        Text(Localization.getString(Localization.Key.SAVE, isBangla), fontWeight = FontWeight.Bold)
+                    }
+                }
+            }
+        }
     }
 }

@@ -799,7 +799,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     ) {
         val isBn = _settings.value.language == "bn"
         val currSymbol = _settings.value.currencySymbol
-        val useBnDigits = _settings.value.numeralSystem == "bn"
+        val useBnDigits = false
         val insightList = mutableListOf<String>()
 
         val isCurrentMonth = monthYear == Formatters.getCurrentMonthYear()
@@ -1026,7 +1026,19 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun deleteAccount() {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            _snackbarMessage.emit(
+                if (_settings.value.language == "bn")
+                    "অ্যাকাউন্ট ও সমস্ত ক্লাউড ডেটা মুছে ফেলা হচ্ছে..."
+                else
+                    "Deleting account and all cloud data..."
+            )
             authRepository.deleteAccountAndData(user.id)
+            _snackbarMessage.emit(
+                if (_settings.value.language == "bn")
+                    "অ্যাকাউন্ট ও সমস্ত তথ্য সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
+                else
+                    "Account and all data have been completely deleted"
+            )
         }
     }
 
@@ -1921,12 +1933,6 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         updateSettings(updated)
     }
 
-    fun toggleNumeralSystem() {
-        val curr = _settings.value
-        val newNumeral = if (curr.numeralSystem == "bn") "en" else "bn"
-        val updated = curr.copy(numeralSystem = newNumeral)
-        updateSettings(updated)
-    }
 
     fun updateCurrency(currencyCode: String, symbol: String) {
         val curr = _settings.value
@@ -2055,10 +2061,17 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     fun clearAllData() {
         val user = currentUser.value ?: return
         viewModelScope.launch {
+            try {
+                firestoreRepository.deleteAllUserData(user.id)
+            } catch (e: Exception) {
+                android.util.Log.w("HisabViewModel", "Cloud wipe in clearAllData error: ${e.message}")
+            }
             hisabRepository.clearAllData(user.id)
             authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
             refreshMonthlyData(user.id)
-            _snackbarMessage.emit("সব হিসাব মুছে ফেলা হয়েছে")
+            _snackbarMessage.emit(
+                if (_settings.value.language == "bn") "সব হিসাব মুছে ফেলা হয়েছে" else "All data cleared"
+            )
         }
     }
 

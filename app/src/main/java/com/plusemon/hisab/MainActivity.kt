@@ -67,7 +67,6 @@ import com.plusemon.hisab.ui.screens.debts.DebtsScreen
 import com.plusemon.hisab.ui.screens.more.MoreScreen
 import com.plusemon.hisab.ui.screens.recurring.RecurringScreen
 import com.plusemon.hisab.ui.screens.reports.ReportsScreen
-import com.plusemon.hisab.ui.screens.settings.SettingsScreen
 import com.plusemon.hisab.ui.screens.transactions.AddEditTransactionScreen
 import com.plusemon.hisab.ui.screens.transactions.TransactionsScreen
 import com.plusemon.hisab.ui.theme.HisabTheme
@@ -277,7 +276,11 @@ fun HisabMainApp(
                     onToggleDarkMode = { viewModel.toggleDarkMode() },
                     onSetThemeMode = { useSystem, isDark -> viewModel.setThemeMode(useSystem, isDark) },
                     onToggleLanguage = { viewModel.toggleLanguage() },
-                    onProfileClick = { currentSubscreen = Screen.Settings.route }
+                    onProfileClick = {
+                        coroutineScope.launch {
+                            pagerState.animateScrollToPage(4)
+                        }
+                    }
                 )
             }
         },
@@ -383,10 +386,10 @@ fun HisabMainApp(
                         }
 
                         Screen.Settings.route -> {
-                            SettingsScreen(
-                                viewModel = viewModel,
-                                onNavigateBack = { currentSubscreen = null }
-                            )
+                            LaunchedEffect(Unit) {
+                                currentSubscreen = null
+                                pagerState.animateScrollToPage(4)
+                            }
                         }
                     }
                 }
@@ -414,7 +417,9 @@ fun HisabMainApp(
                                 onNavigateToDebts = {
                                     coroutineScope.launch { pagerState.animateScrollToPage(3) }
                                 },
-                                onNavigateToSettings = { currentSubscreen = Screen.Settings.route },
+                                onNavigateToSettings = {
+                                    coroutineScope.launch { pagerState.animateScrollToPage(4) }
+                                },
                                 onTransactionClick = { txItem ->
                                     selectedTransactionForEdit = txItem
                                     currentSubscreen = Screen.AddEditTransaction.route
@@ -460,8 +465,7 @@ fun HisabMainApp(
                                 onNavigateToReports = { currentSubscreen = Screen.Reports.route },
                                 onNavigateToAccounts = { currentSubscreen = Screen.Accounts.route },
                                 onNavigateToCategories = { currentSubscreen = Screen.Categories.route },
-                                onNavigateToRecurring = { currentSubscreen = Screen.Recurring.route },
-                                onNavigateToSettings = { currentSubscreen = Screen.Settings.route }
+                                onNavigateToRecurring = { currentSubscreen = Screen.Recurring.route }
                             )
                         }
                     }

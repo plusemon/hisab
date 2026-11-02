@@ -23,28 +23,19 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.automirrored.filled.ExitToApp
 import androidx.compose.material.icons.filled.ChevronRight
-import androidx.compose.material.icons.filled.CloudDownload
-import androidx.compose.material.icons.filled.CloudSync
 import androidx.compose.material.icons.filled.DarkMode
-import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.DeleteForever
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Repeat
 import androidx.compose.material.icons.filled.SystemUpdate
-import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
-import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
@@ -90,54 +81,6 @@ fun SettingsScreen(
 
     var showPinDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
-    var showClearDataDialog by remember { mutableStateOf(false) }
-    var showManualRestoreConfirmDialog by remember { mutableStateOf(false) }
-
-    // Manual Restore Confirmation Dialog
-    if (showManualRestoreConfirmDialog) {
-        AlertDialog(
-            onDismissRequest = { showManualRestoreConfirmDialog = false },
-            icon = {
-                Icon(
-                    imageVector = Icons.Default.CloudDownload,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(32.dp)
-                )
-            },
-            title = {
-                Text(
-                    text = if (isBn) "ক্লাউড থেকে তথ্য পুনরুদ্ধার করবেন?" else "Restore Data from Cloud?",
-                    fontWeight = FontWeight.Bold
-                )
-            },
-            text = {
-                Text(
-                    text = if (isBn)
-                        "আপনার ক্লাউড ব্যাকআপ থেকে সমস্ত অ্যাকাউন্ট, লেনদেন ও হিসাব পুনরুদ্ধার করা হবে এবং বর্তমান তথ্যের সাথে সমন্বয় করা হবে।"
-                    else
-                        "All accounts, transactions, and settings from your cloud backup will be restored and cleanly merged with this device.",
-                    style = MaterialTheme.typography.bodyMedium
-                )
-            },
-            confirmButton = {
-                Button(
-                    onClick = {
-                        showManualRestoreConfirmDialog = false
-                        viewModel.triggerRestoreFromCloud(isManual = true)
-                    },
-                    modifier = Modifier.testTag("confirm_restore_button")
-                ) {
-                    Text(if (isBn) "পুনরুদ্ধার শুরু করুন" else "Start Restore")
-                }
-            },
-            dismissButton = {
-                TextButton(onClick = { showManualRestoreConfirmDialog = false }) {
-                    Text(if (isBn) "বাতিল" else "Cancel")
-                }
-            }
-        )
-    }
 
     // PIN Setup Dialog
     if (showPinDialog) {
@@ -148,26 +91,6 @@ fun SettingsScreen(
                 viewModel.setPin(pin)
                 showPinDialog = false
                 Toast.makeText(context, if (isBn) "পিন সুরক্ষা চালু হয়েছে" else "PIN lock enabled", Toast.LENGTH_SHORT).show()
-            }
-        )
-    }
-
-    // Clear Data Confirmation Dialog
-    if (showClearDataDialog) {
-        DeleteConfirmationDialog(
-            title = if (isBn) "সব তথ্য মুছে ফেলবেন?" else "Clear All Data?",
-            message = if (isBn)
-                "আপনার সমস্ত লেনদেন, অ্যাকাউন্ট, বাজেট, দেনা-পাওনা ও সঞ্চয় লক্ষ্য মুছে ফেলা হবে। এই কাজটি পুনরায় ফিরিয়ে আনা যাবে না।"
-            else
-                "All your transactions, accounts, budgets, debts and savings goals will be permanently deleted. This action cannot be undone.",
-            itemDetail = if (isBn) "সতর্কতা: সমস্ত ডেটা রিসেট হয়ে যাবে" else "Warning: All local and synced data will be wiped",
-            isBangla = isBn,
-            onConfirm = {
-                viewModel.clearAllData()
-                showClearDataDialog = false
-            },
-            onDismiss = {
-                showClearDataDialog = false
             }
         )
     }
@@ -227,13 +150,6 @@ fun SettingsScreen(
                         title = Localization.getString(Localization.Key.LANGUAGE, isBn),
                         value = if (isBn) "বাংলা" else "English",
                         onClick = { viewModel.toggleLanguage() }
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    SettingsRowItem(
-                        icon = Icons.Default.Language,
-                        title = Localization.getString(Localization.Key.NUMERAL_SYSTEM, isBn),
-                        value = if (settings.numeralSystem == "bn") "বাংলা (১, ২, ৩)" else "English (1, 2, 3)",
-                        onClick = { viewModel.toggleNumeralSystem() }
                     )
                     HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     // Dark Mode Toggle Row
@@ -350,44 +266,9 @@ fun SettingsScreen(
 
             Spacer(modifier = Modifier.height(16.dp))
 
-            // Section: Cloud Backup & Restore
-            Text(
-                text = if (isBn) "ক্লাউড ব্যাকআপ ও পুনরুদ্ধার" else "Cloud Backup & Restore",
-                style = MaterialTheme.typography.labelLarge,
-                color = MaterialTheme.colorScheme.primary,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.padding(start = 4.dp, top = 8.dp, bottom = 8.dp)
-            )
-
-            Card(
-                modifier = Modifier.fillMaxWidth(),
-                shape = RoundedCornerShape(16.dp),
-                colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.6f)),
-                elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
-            ) {
-                Column {
-                    SettingsRowItem(
-                        icon = Icons.Default.CloudSync,
-                        title = if (isBn) "ক্লাউড সিঙ্ক করুন" else "Sync with Cloud",
-                        value = if (isBn) "এখনই সিঙ্ক" else "Sync Now",
-                        onClick = { viewModel.triggerManualSync() }
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-                    SettingsRowItem(
-                        icon = Icons.Default.CloudDownload,
-                        title = if (isBn) "ক্লাউড থেকে তথ্য পুনরুদ্ধার" else "Restore from Cloud",
-                        value = if (isBn) "পুনরুদ্ধার" else "Restore",
-                        onClick = { showManualRestoreConfirmDialog = true }
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(16.dp))
-
             // Section: Danger Zone & Sign Out
             Text(
-                text = if (isBn) "বিপদজনক জোন ও লগআউট" else "Danger Zone & Account",
+                text = if (isBn) "বিপদজনক জোন ও একাউন্ট" else "Danger Zone & Account",
                 style = MaterialTheme.typography.labelLarge,
                 color = ExpenseRed,
                 fontWeight = FontWeight.Bold,
@@ -402,13 +283,6 @@ fun SettingsScreen(
                 elevation = CardDefaults.cardElevation(defaultElevation = 0.dp)
             ) {
                 Column {
-                    SettingsRowItem(
-                        icon = Icons.Default.Delete,
-                        title = if (isBn) "সব তথ্য পরিষ্কার করুন" else "Clear All Data",
-                        titleColor = ExpenseRed,
-                        onClick = { showClearDataDialog = true }
-                    )
-                    HorizontalDivider(modifier = Modifier.padding(horizontal = 16.dp), color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
                     SettingsRowItem(
                         icon = Icons.Default.DeleteForever,
                         title = Localization.getString(Localization.Key.DELETE_ACCOUNT, isBn),

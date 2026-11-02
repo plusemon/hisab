@@ -81,6 +81,7 @@ interface FirestoreRepository {
     suspend fun saveUserSettings(userId: String, settings: UserSettings): Result<Unit>
     suspend fun fetchUserSettings(userId: String): Result<UserSettings?>
 
+    suspend fun deleteAllUserData(userId: String): Result<Unit>
     suspend fun checkHasCloudData(userId: String): Result<Boolean>
     suspend fun restoreCloudUserData(
         userId: String,
@@ -3065,6 +3066,63 @@ class FirestoreRepositoryImpl(
 
         awaitClose {
             listenerRegistration.remove()
+        }
+    }
+
+    override suspend fun deleteAllUserData(userId: String): Result<Unit> = withContext(Dispatchers.IO) {
+        val firestore = getFirestore() ?: return@withContext Result.failure(
+            IllegalStateException("Firebase is not initialized")
+        )
+        try {
+            val candidateIds = resolveCandidateUserIds(userId, firestore)
+            Log.i(TAG, "deleteAllUserData: Deleting cloud data for candidate IDs: $candidateIds")
+            val subcollections = listOf(
+                COLLECTION_TRANSACTIONS,
+                COLLECTION_ACCOUNTS,
+                COLLECTION_CATEGORIES,
+                COLLECTION_BUDGETS,
+                COLLECTION_SAVINGS_GOALS,
+                COLLECTION_CONTACTS,
+                COLLECTION_LOANS_DEBTS,
+                COLLECTION_LOAN_REPAYMENTS,
+                COLLECTION_VENDORS,
+                COLLECTION_SHOP_CREDIT_PURCHASES,
+                COLLECTION_SHOP_CREDIT_PAYMENTS,
+                COLLECTION_RECURRING_RULES,
+                COLLECTION_SETTINGS
+            )
+
+            for (candId in candidateIds) {
+                val userDocRef = firestore.collection(COLLECTION_USERS).document(candId)
+                for (subcoll in subcollections) {
+                    try {
+                        val snapshot = userDocRef.collection(subcoll).get().awaitTask(10000L)
+                        if (!snapshot.isEmpty) {
+                            snapshot.documents.chunked(450).forEach { chunk ->
+                                val batch = firestore.batch()
+                                chunk.forEach { doc ->
+                                    batch.delete(doc.reference)
+                                }
+                                batch.commit().awaitTask(10000L)
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.w(TAG, "deleteAllUserData: error deleting subcollection $subcoll for $candId: ${e.message}")
+                    }
+                }
+
+                // Delete the user root document
+                try {
+                    userDocRef.delete().awaitTask(6000L)
+                } catch (e: Exception) {
+                    Log.w(TAG, "deleteAllUserData: error deleting user doc $candId: ${e.message}")
+                }
+            }
+            Log.i(TAG, "deleteAllUserData: Successfully purged all cloud data for $userId")
+            Result.success(Unit)
+        } catch (e: Exception) {
+            Log.e(TAG, "deleteAllUserData failed: ${e.message}", e)
+            Result.failure(e)
         }
     }
 

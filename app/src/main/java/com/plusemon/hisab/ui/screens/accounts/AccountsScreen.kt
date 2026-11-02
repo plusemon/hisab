@@ -102,7 +102,7 @@ fun AccountsScreen(
 ) {
     val settings by viewModel.settings.collectAsState()
     val isBn = settings.language == "bn"
-    val useBnDigits = settings.numeralSystem == "bn"
+    val useBnDigits = false
     val hideBalances = settings.hideBalances
     val isNetworkConnected by viewModel.isNetworkConnected.collectAsState()
     val currSymbol = settings.currencySymbol
