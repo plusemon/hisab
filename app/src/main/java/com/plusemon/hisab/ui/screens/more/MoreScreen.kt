@@ -28,6 +28,7 @@ import androidx.compose.material.icons.filled.Category
 import androidx.compose.material.icons.filled.ChevronRight
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.DeleteForever
+import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.Language
 import androidx.compose.material.icons.filled.LightMode
 import androidx.compose.material.icons.filled.Lock
@@ -89,6 +90,7 @@ fun MoreScreen(
     var showPinDialog by remember { mutableStateOf(false) }
     var showDeleteAccountDialog by remember { mutableStateOf(false) }
     var showSignOutDialog by remember { mutableStateOf(false) }
+    var showClearDataDialog by remember { mutableStateOf(false) }
 
     // PIN Setup Dialog
     if (showPinDialog) {
@@ -138,6 +140,26 @@ fun MoreScreen(
             },
             onDismiss = {
                 showSignOutDialog = false
+            }
+        )
+    }
+
+    // Clear All Data Confirmation Dialog
+    if (showClearDataDialog) {
+        DeleteConfirmationDialog(
+            title = if (isBn) "সব হিসাব মুছে ফেলুন" else "Clear All Data",
+            message = if (isBn) "আপনার সমস্ত লেনদেন ও আর্থিক তথ্য মুছে ফেলা হবে। আপনি কি নিশ্চিত?" else "All your transactions and financial records will be wiped. Are you sure?",
+            itemDetail = if (isBn) "সমস্ত স্থানীয় ও ক্লাউড হিসাব" else "All local and cloud records",
+            confirmButtonText = if (isBn) "ডাটা মুছুন" else "Clear Data",
+            cancelButtonText = if (isBn) "বাতিল" else "Cancel",
+            icon = Icons.Default.DeleteSweep,
+            isBangla = isBn,
+            onConfirm = {
+                viewModel.clearAllData()
+                showClearDataDialog = false
+            },
+            onDismiss = {
+                showClearDataDialog = false
             }
         )
     }
@@ -481,6 +503,22 @@ fun MoreScreen(
             border = BorderStroke(1.dp, ExpenseRed.copy(alpha = 0.35f))
         ) {
             Column {
+                // Clear All Financial Data
+                SettingsActionRowItem(
+                    icon = Icons.Default.DeleteSweep,
+                    title = if (isBn) "সব হিসাব মুছে ফেলুন" else "Clear All Financial Data",
+                    titleColor = ExpenseRed,
+                    iconBgColor = ExpenseRed.copy(alpha = 0.12f),
+                    iconTint = ExpenseRed,
+                    onClick = { showClearDataDialog = true },
+                    testTag = "more_clear_all_data_tile"
+                )
+
+                HorizontalDivider(
+                    modifier = Modifier.padding(horizontal = 16.dp),
+                    color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                )
+
                 // Delete Account & Data
                 SettingsActionRowItem(
                     icon = Icons.Default.DeleteForever,

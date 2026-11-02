@@ -322,6 +322,11 @@ fun AuthScreen(
                 val finalResult = result
                     ?: throw NoCredentialException("No credentials returned from Google Sign-In")
 
+                viewModel.showBlockingLoading(
+                    title = if (isBn) "গুগল সাইন ইন" else "Google Sign-In",
+                    message = if (isBn) "অ্যাকাউন্ট প্রমাণীকরণ ও ডেটা লোড করা হচ্ছে..." else "Authenticating account and preparing data..."
+                )
+
                 val googleIdTokenCredential = GoogleIdTokenCredential.createFrom(finalResult.credential.data)
                 val idToken = googleIdTokenCredential.idToken
                 val userEmail = googleIdTokenCredential.id
@@ -347,6 +352,7 @@ fun AuthScreen(
                     photoUrl = userPhotoUrl
                 )
             } catch (e: Throwable) {
+                viewModel.hideBlockingLoading()
                 if (isCancellation(e)) {
                     Log.i("GoogleSignIn", "Google Sign-In cancelled/dismissed by user.")
                 } else {

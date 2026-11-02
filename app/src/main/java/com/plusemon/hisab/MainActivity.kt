@@ -43,6 +43,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
+import com.plusemon.hisab.ui.components.BlockingLoadingDialog
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.input.nestedscroll.NestedScrollConnection
 import androidx.compose.ui.input.nestedscroll.NestedScrollSource
@@ -88,6 +89,7 @@ class MainActivity : ComponentActivity() {
             val currentUser by viewModel.currentUser.collectAsState()
             val isAuthInitializing by viewModel.isAuthInitializing.collectAsState()
             val isLocked by viewModel.isAppLocked.collectAsState()
+            val blockingLoadingState by viewModel.blockingLoadingState.collectAsState()
 
             val isSystemDark = isSystemInDarkTheme()
             val isDarkTheme = if (settings.useSystemTheme) isSystemDark else settings.isDarkMode
@@ -125,6 +127,14 @@ class MainActivity : ComponentActivity() {
                     HisabMainApp(
                         viewModel = viewModel,
                         snackbarHostState = snackbarHostState
+                    )
+                }
+
+                // Global Blocking Loading Dialog (for Sign-In, Sign-Out, Account Deletion, Data Reset)
+                blockingLoadingState?.let { state ->
+                    BlockingLoadingDialog(
+                        state = state,
+                        isBangla = settings.language == "bn"
                     )
                 }
             }

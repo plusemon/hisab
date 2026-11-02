@@ -51,6 +51,9 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import com.plusemon.hisab.ui.components.BlockingLoadingState
 
 sealed class RestoreUiState {
     object Idle : RestoreUiState()
@@ -145,6 +148,47 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _isAuthLoading = MutableStateFlow(false)
     val isAuthLoading = _isAuthLoading.asStateFlow()
+
+    private val _blockingLoadingState = MutableStateFlow<BlockingLoadingState?>(null)
+    val blockingLoadingState: StateFlow<BlockingLoadingState?> = _blockingLoadingState.asStateFlow()
+
+    fun showBlockingLoading(title: String, message: String, isDanger: Boolean = false) {
+        _blockingLoadingState.value = BlockingLoadingState(title = title, message = message, isDanger = isDanger)
+    }
+
+    fun hideBlockingLoading() {
+        _blockingLoadingState.value = null
+    }
+
+    suspend fun withBlockingLoading(
+        title: String,
+        message: String,
+        isDanger: Boolean = false,
+        timeoutMs: Long = 15000L,
+        block: suspend () -> Unit
+    ) {
+        val isBn = _settings.value.language == "bn"
+        _blockingLoadingState.value = BlockingLoadingState(title = title, message = message, isDanger = isDanger)
+        try {
+            withTimeout(timeoutMs) {
+                block()
+            }
+        } catch (e: TimeoutCancellationException) {
+            android.util.Log.w("HisabViewModel", "Blocking operation timed out after ${timeoutMs}ms")
+            _snackbarMessage.emit(
+                if (isBn)
+                    "অপারেশনের সময় শেষ হয়ে গেছে (১৫ সেকেন্ড)। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করুন।"
+                else
+                    "Operation timed out after 15 seconds. Please check your internet connection."
+            )
+        } catch (e: Exception) {
+            android.util.Log.e("HisabViewModel", "Error during blocking operation: ${e.message}", e)
+            val errorText = e.localizedMessage ?: if (isBn) "একটি সমস্যা হয়েছে" else "An error occurred"
+            _snackbarMessage.emit(errorText)
+        } finally {
+            _blockingLoadingState.value = null
+        }
+    }
 
     private val appPrefs = application.getSharedPreferences("hisab_settings_prefs", android.content.Context.MODE_PRIVATE)
 
@@ -896,16 +940,24 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     // -------------------------------------------------------------
 
     fun signInWithGoogle(uid: String? = null, email: String, name: String, photoUrl: String? = null) {
+        val isBn = _settings.value.language == "bn"
         viewModelScope.launch {
-            _isAuthLoading.value = true
-            _authError.value = null
-            when (val result = authRepository.signInWithGoogle(uid, email, name, photoUrl)) {
-                is AuthResult.Success -> {
-                    _isAuthLoading.value = false
-                }
-                is AuthResult.Error -> {
-                    _isAuthLoading.value = false
-                    _authError.value = result.message
+            withBlockingLoading(
+                title = if (isBn) "গুগল সাইন ইন" else "Google Sign-In",
+                message = if (isBn) "অ্যাকাউন্ট যাচাই ও তথ্য প্রস্তুত করা হচ্ছে..." else "Verifying account credentials and loading data...",
+                isDanger = false,
+                timeoutMs = 15000L
+            ) {
+                _isAuthLoading.value = true
+                _authError.value = null
+                when (val result = authRepository.signInWithGoogle(uid, email, name, photoUrl)) {
+                    is AuthResult.Success -> {
+                        _isAuthLoading.value = false
+                    }
+                    is AuthResult.Error -> {
+                        _isAuthLoading.value = false
+                        _authError.value = result.message
+                    }
                 }
             }
         }
@@ -913,6 +965,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
     fun handleGoogleSignInFailure(e: Throwable) {
         _isAuthLoading.value = false
+        _blockingLoadingState.value = null
         val apiException = findApiException(e)
         val statusCode = apiException?.statusCode ?: extractStatusCodeFromException(e)
 
@@ -1018,27 +1071,40 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun signOut() {
+        val isBn = _settings.value.language == "bn"
         viewModelScope.launch {
-            authRepository.signOut()
+            withBlockingLoading(
+                title = if (isBn) "সাইন আউট" else "Signing Out",
+                message = if (isBn) "অ্যাকাউন্ট সেশন সুরক্ষিতভাবে শেষ করা হচ্ছে..." else "Securing your session and signing out...",
+                isDanger = true,
+                timeoutMs = 15000L
+            ) {
+                authRepository.signOut()
+            }
         }
     }
 
     fun deleteAccount() {
         val user = currentUser.value ?: return
+        val isBn = _settings.value.language == "bn"
         viewModelScope.launch {
-            _snackbarMessage.emit(
-                if (_settings.value.language == "bn")
-                    "অ্যাকাউন্ট ও সমস্ত ক্লাউড ডেটা মুছে ফেলা হচ্ছে..."
+            withBlockingLoading(
+                title = if (isBn) "অ্যাকাউন্ট ডিলিট" else "Deleting Account",
+                message = if (isBn)
+                    "অ্যাকাউন্ট ও সমস্ত ক্লাউড ডেটা স্থায়ীভাবে মুছে ফেলা হচ্ছে..."
                 else
-                    "Deleting account and all cloud data..."
-            )
-            authRepository.deleteAccountAndData(user.id)
-            _snackbarMessage.emit(
-                if (_settings.value.language == "bn")
-                    "অ্যাকাউন্ট ও সমস্ত তথ্য সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
-                else
-                    "Account and all data have been completely deleted"
-            )
+                    "Deleting account and permanently wiping all cloud data...",
+                isDanger = true,
+                timeoutMs = 15000L
+            ) {
+                authRepository.deleteAccountAndData(user.id)
+                _snackbarMessage.emit(
+                    if (isBn)
+                        "অ্যাকাউন্ট ও সমস্ত তথ্য সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
+                    else
+                        "Account and all data have been completely deleted"
+                )
+            }
         }
     }
 
@@ -2060,18 +2126,29 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
 
     fun clearAllData() {
         val user = currentUser.value ?: return
+        val isBn = _settings.value.language == "bn"
         viewModelScope.launch {
-            try {
-                firestoreRepository.deleteAllUserData(user.id)
-            } catch (e: Exception) {
-                android.util.Log.w("HisabViewModel", "Cloud wipe in clearAllData error: ${e.message}")
+            withBlockingLoading(
+                title = if (isBn) "সব হিসাব মুছে ফেলা হচ্ছে" else "Clearing All Data",
+                message = if (isBn)
+                    "স্থানীয় ও ক্লাউড ডাটাবেস থেকে সমস্ত তথ্য মুছে ফেলা হচ্ছে..."
+                else
+                    "Clearing all local and cloud transaction records...",
+                isDanger = true,
+                timeoutMs = 15000L
+            ) {
+                try {
+                    firestoreRepository.deleteAllUserData(user.id)
+                } catch (e: Exception) {
+                    android.util.Log.w("HisabViewModel", "Cloud wipe in clearAllData error: ${e.message}")
+                }
+                hisabRepository.clearAllData(user.id)
+                authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
+                refreshMonthlyData(user.id)
+                _snackbarMessage.emit(
+                    if (isBn) "সব হিসাব মুছে ফেলা হয়েছে" else "All data cleared"
+                )
             }
-            hisabRepository.clearAllData(user.id)
-            authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
-            refreshMonthlyData(user.id)
-            _snackbarMessage.emit(
-                if (_settings.value.language == "bn") "সব হিসাব মুছে ফেলা হয়েছে" else "All data cleared"
-            )
         }
     }
 
