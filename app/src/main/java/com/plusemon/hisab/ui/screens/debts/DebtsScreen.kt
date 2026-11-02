@@ -10,6 +10,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -4015,6 +4021,7 @@ fun AddShopCreditBottomSheet(
     var categoryTag by remember { mutableStateOf(selectedVendor?.categoryTag ?: "General") }
 
     var dropdownExpanded by remember { mutableStateOf(false) }
+    var isStoreFocused by remember { mutableStateOf(false) }
     var showCreateVendorBottomSheet by remember { mutableStateOf(false) }
 
     val context = LocalContext.current
@@ -4264,7 +4271,7 @@ fun AddShopCreditBottomSheet(
                     }
                 }
             } else {
-                Box(modifier = Modifier.fillMaxWidth()) {
+                Column(modifier = Modifier.fillMaxWidth()) {
                     OutlinedTextField(
                         value = vendorSearchQuery,
                         onValueChange = {
@@ -4288,7 +4295,10 @@ fun AddShopCreditBottomSheet(
                         },
                         trailingIcon = {
                             if (vendorSearchQuery.isNotBlank()) {
-                                IconButton(onClick = { vendorSearchQuery = ""; dropdownExpanded = false }) {
+                                IconButton(onClick = {
+                                    vendorSearchQuery = ""
+                                    dropdownExpanded = false
+                                }) {
                                     Icon(
                                         Icons.Default.Close,
                                         contentDescription = "Clear",
@@ -4312,54 +4322,148 @@ fun AddShopCreditBottomSheet(
                         modifier = Modifier
                             .fillMaxWidth()
                             .heightIn(min = 56.dp)
+                            .onFocusChanged { focusState ->
+                                isStoreFocused = focusState.isFocused
+                                if (focusState.isFocused) {
+                                    dropdownExpanded = true
+                                }
+                            }
                             .testTag("shop_credit_vendor_input")
                     )
 
-                    val filteredVendors = activeVendors.filter {
-                        it.name.contains(vendorSearchQuery, ignoreCase = true)
+                    val filteredVendors = remember(activeVendors, vendorSearchQuery) {
+                        if (vendorSearchQuery.isBlank()) activeVendors
+                        else activeVendors.filter {
+                            it.name.contains(vendorSearchQuery, ignoreCase = true)
+                        }
                     }
 
-                    DropdownMenu(
-                        expanded = dropdownExpanded && selectedVendor == null,
-                        onDismissRequest = { dropdownExpanded = false },
-                        modifier = Modifier.fillMaxWidth(0.9f)
+                    val showSuggestions = (isStoreFocused || dropdownExpanded) && selectedVendor == null && (dropdownExpanded || vendorSearchQuery.isNotBlank())
+
+                    AnimatedVisibility(
+                        visible = showSuggestions,
+                        enter = fadeIn() + expandVertically(),
+                        exit = fadeOut() + shrinkVertically()
                     ) {
-                        filteredVendors.take(5).forEach { v ->
-                            DropdownMenuItem(
-                                text = {
-                                    Column {
-                                        Text(v.name, fontWeight = FontWeight.SemiBold, color = MaterialTheme.colorScheme.onSurface)
-                                        if (v.phone.isNotBlank() || v.categoryTag.isNotBlank()) {
-                                            Text(
-                                                "${v.categoryTag} ${if (v.phone.isNotBlank()) "• ${v.phone}" else ""}",
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                                            )
-                                        }
-                                    }
-                                },
-                                leadingIcon = {
-                                    Icon(Icons.Default.Store, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                                },
-                                onClick = {
-                                    selectedVendor = v
-                                    vendorSearchQuery = v.name
-                                    phone = v.phone
-                                    locationNote = v.locationNote
-                                    categoryTag = v.categoryTag
-                                    dropdownExpanded = false
+                        Card(
+                            shape = RoundedCornerShape(14.dp),
+                            colors = CardDefaults.cardColors(
+                                containerColor = MaterialTheme.colorScheme.surfaceContainerHigh
+                            ),
+                            elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
+                            border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.7f)),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = 4.dp)
+                                .testTag("shop_suggestions_card")
+                        ) {
+                            Column(modifier = Modifier.fillMaxWidth()) {
+                                // Header row with count and dismiss
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+                                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                                    horizontalArrangement = Arrangement.SpaceBetween,
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (isBangla) "দোকানের তালিকা (${filteredVendors.size})" else "Store Suggestions (${filteredVendors.size})",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        fontWeight = FontWeight.SemiBold,
+                                        color = MaterialTheme.colorScheme.primary
+                                    )
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = if (isBangla) "বন্ধ করুন" else "Dismiss",
+                                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier
+                                            .size(18.dp)
+                                            .clip(CircleShape)
+                                            .clickable { dropdownExpanded = false }
+                                    )
                                 }
-                            )
-                        }
 
-                        if (filteredVendors.isNotEmpty()) {
-                            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
-                        }
+                                if (filteredVendors.isNotEmpty()) {
+                                    filteredVendors.take(5).forEach { v ->
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .clickable {
+                                                    selectedVendor = v
+                                                    vendorSearchQuery = v.name
+                                                    phone = v.phone
+                                                    locationNote = v.locationNote
+                                                    categoryTag = v.categoryTag
+                                                    dropdownExpanded = false
+                                                }
+                                                .padding(horizontal = 14.dp, vertical = 10.dp),
+                                            verticalAlignment = Alignment.CenterVertically
+                                        ) {
+                                            Box(
+                                                modifier = Modifier
+                                                    .size(32.dp)
+                                                    .clip(RoundedCornerShape(8.dp))
+                                                    .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.15f)),
+                                                contentAlignment = Alignment.Center
+                                            ) {
+                                                Icon(
+                                                    Icons.Default.Store,
+                                                    contentDescription = null,
+                                                    tint = MaterialTheme.colorScheme.primary,
+                                                    modifier = Modifier.size(16.dp)
+                                                )
+                                            }
+                                            Spacer(modifier = Modifier.width(10.dp))
+                                            Column(modifier = Modifier.weight(1f)) {
+                                                Text(
+                                                    text = v.name,
+                                                    style = MaterialTheme.typography.bodyMedium,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                                if (v.categoryTag.isNotBlank() || v.phone.isNotBlank()) {
+                                                    Text(
+                                                        text = listOfNotNull(
+                                                            v.categoryTag.ifBlank { null },
+                                                            v.phone.ifBlank { null }
+                                                        ).joinToString(" • "),
+                                                        style = MaterialTheme.typography.labelSmall,
+                                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                                    )
+                                                }
+                                            }
+                                        }
+                                        HorizontalDivider(
+                                            modifier = Modifier.padding(horizontal = 12.dp),
+                                            color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                        )
+                                    }
+                                } else if (vendorSearchQuery.isNotBlank()) {
+                                    Text(
+                                        text = if (isBangla) "এই নামে কোনো পূর্বে সংরক্ষিত শপ নেই" else "No saved shop found with this name",
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 10.dp)
+                                    )
+                                    HorizontalDivider(
+                                        modifier = Modifier.padding(horizontal = 12.dp),
+                                        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f)
+                                    )
+                                }
 
-                        // Pinned "+ Add New Shop" action with syntax typo fixed (+ Add New Shop)
-                        DropdownMenuItem(
-                            text = {
-                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                // Pinned "+ Add New Shop" action
+                                Row(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .clickable {
+                                            dropdownExpanded = false
+                                            showCreateVendorBottomSheet = true
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 10.dp)
+                                        .testTag("shop_credit_add_new_shop_btn"),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
                                     Icon(
                                         Icons.Default.Add,
                                         contentDescription = null,
@@ -4368,18 +4472,14 @@ fun AddShopCreditBottomSheet(
                                     )
                                     Spacer(modifier = Modifier.width(8.dp))
                                     Text(
-                                        text = if (isBangla) "নতুন শপ" else "Add New Shop",
+                                        text = if (isBangla) "নতুন শপ তৈরি করুন" else "Create New Shop",
                                         fontWeight = FontWeight.Bold,
+                                        style = MaterialTheme.typography.labelLarge,
                                         color = MaterialTheme.colorScheme.primary
                                     )
                                 }
-                            },
-                            onClick = {
-                                dropdownExpanded = false
-                                showCreateVendorBottomSheet = true
-                            },
-                            modifier = Modifier.testTag("shop_credit_add_new_shop_btn")
-                        )
+                            }
+                        }
                     }
                 }
 
