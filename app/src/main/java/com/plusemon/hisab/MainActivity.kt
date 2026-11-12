@@ -199,6 +199,7 @@ fun HisabMainApp(
     var selectedTransactionForEdit by remember { mutableStateOf<TransactionWithDetails?>(null) }
     var initialTransactionType by remember { mutableStateOf(TransactionType.EXPENSE) }
     var isDebtDetailActive by remember { mutableStateOf(false) }
+    var activeCategoryFilterForTransactions by remember { mutableStateOf<Long?>(null) }
 
     var showAddTransactionSheet by remember { mutableStateOf(false) }
     var initialSheetTransactionType by remember { mutableStateOf(TransactionType.EXPENSE) }
@@ -394,7 +395,14 @@ fun HisabMainApp(
                         Screen.Categories.route -> {
                             ManageCategoriesScreen(
                                 viewModel = viewModel,
-                                onNavigateBack = { currentSubscreen = null }
+                                onNavigateBack = { currentSubscreen = null },
+                                onCategoryClick = { category ->
+                                    activeCategoryFilterForTransactions = category.id
+                                    currentSubscreen = null
+                                    coroutineScope.launch {
+                                        pagerState.animateScrollToPage(1)
+                                    }
+                                }
                             )
                         }
 
@@ -464,6 +472,10 @@ fun HisabMainApp(
                                 onTransactionClick = { txItem ->
                                     selectedTransactionForEdit = txItem
                                     currentSubscreen = Screen.AddEditTransaction.route
+                                },
+                                filterCategoryId = activeCategoryFilterForTransactions,
+                                onFilterCategoryChange = { newCatId ->
+                                    activeCategoryFilterForTransactions = newCatId
                                 }
                             )
                         }

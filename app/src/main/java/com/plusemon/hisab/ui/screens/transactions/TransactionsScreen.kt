@@ -26,6 +26,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ReceiptLong
 import androidx.compose.material.icons.filled.AccountBalanceWallet
 import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Clear
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Delete
@@ -35,6 +36,7 @@ import androidx.compose.material.icons.filled.SwapHoriz
 import androidx.compose.material.icons.filled.Tune
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -72,6 +74,8 @@ fun TransactionsScreen(
     viewModel: HisabViewModel,
     onNavigateToAddTransaction: () -> Unit,
     onTransactionClick: (TransactionWithDetails) -> Unit,
+    filterCategoryId: Long? = null,
+    onFilterCategoryChange: ((Long?) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -82,17 +86,24 @@ fun TransactionsScreen(
 
     val allTransactions by viewModel.transactions.collectAsState()
     val accounts by viewModel.accountsWithBalances.collectAsState()
+    val categories by viewModel.categories.collectAsState()
 
     var searchQuery by remember { mutableStateOf("") }
     var selectedTypeFilter by remember { mutableStateOf<TransactionType?>(null) }
     var selectedPeriodFilter by remember { mutableStateOf("THIS_MONTH") }
     var selectedAccountId by remember { mutableStateOf<Long?>(null) }
+    var selectedCategoryId by remember(filterCategoryId) { mutableStateOf(filterCategoryId) }
     var showFilterSheet by remember { mutableStateOf(false) }
     var txToDelete by remember { mutableStateOf<TransactionWithDetails?>(null) }
 
-    val hasActiveFilters = selectedTypeFilter != null || selectedAccountId != null || selectedPeriodFilter != "THIS_MONTH"
+    LaunchedEffect(filterCategoryId) {
+        selectedCategoryId = filterCategoryId
+    }
+
+    val hasActiveFilters = selectedTypeFilter != null || selectedAccountId != null || selectedCategoryId != null || selectedPeriodFilter != "THIS_MONTH"
     val activeFilterCount = (if (selectedTypeFilter != null) 1 else 0) +
             (if (selectedAccountId != null) 1 else 0) +
+            (if (selectedCategoryId != null) 1 else 0) +
             (if (selectedPeriodFilter != "THIS_MONTH") 1 else 0)
 
     if (txToDelete != null) {
@@ -115,8 +126,8 @@ fun TransactionsScreen(
         )
     }
 
-    // Filter logic including Account Filter
-    val filteredTransactions = remember(allTransactions, searchQuery, selectedTypeFilter, selectedPeriodFilter, selectedAccountId) {
+    // Filter logic including Account and Category Filter
+    val filteredTransactions = remember(allTransactions, searchQuery, selectedTypeFilter, selectedPeriodFilter, selectedAccountId, selectedCategoryId) {
         val (start, end) = Formatters.getStartAndEndForPeriod(selectedPeriodFilter)
         allTransactions.filter { item ->
             val matchesPeriod = if (selectedPeriodFilter == "ALL") true else item.transaction.dateTimestamp in start..end
@@ -124,6 +135,7 @@ fun TransactionsScreen(
             val matchesAccount = selectedAccountId == null ||
                     item.transaction.accountId == selectedAccountId ||
                     (item.transaction.type == TransactionType.TRANSFER && item.transaction.toAccountId == selectedAccountId)
+            val matchesCategory = selectedCategoryId == null || item.category?.id == selectedCategoryId
             val matchesSearch = if (searchQuery.isBlank()) true else {
                 val q = searchQuery.lowercase()
                 item.transaction.note.lowercase().contains(q) ||
@@ -133,7 +145,7 @@ fun TransactionsScreen(
                         (item.toAccount?.name?.lowercase()?.contains(q) == true) ||
                         item.transaction.amount.toString().contains(q)
             }
-            matchesPeriod && matchesType && matchesAccount && matchesSearch
+            matchesPeriod && matchesType && matchesAccount && matchesCategory && matchesSearch
         }
     }
 
@@ -149,10 +161,12 @@ fun TransactionsScreen(
             initialPeriod = selectedPeriodFilter,
             initialType = selectedTypeFilter,
             initialAccountId = selectedAccountId,
+            initialCategoryId = selectedCategoryId,
             accounts = accounts,
+            categories = categories,
             isBangla = isBn,
             useBanglaDigits = useBnDigits,
-            calculateMatchCount = { p, t, a ->
+            calculateMatchCount = { p, t, a, c ->
                 val (start, end) = Formatters.getStartAndEndForPeriod(p)
                 allTransactions.count { item ->
                     val matchesPeriod = if (p == "ALL") true else item.transaction.dateTimestamp in start..end
@@ -160,6 +174,7 @@ fun TransactionsScreen(
                     val matchesAccount = a == null ||
                             item.transaction.accountId == a ||
                             (item.transaction.type == TransactionType.TRANSFER && item.transaction.toAccountId == a)
+                    val matchesCategory = c == null || item.category?.id == c
                     val matchesSearch = if (searchQuery.isBlank()) true else {
                         val q = searchQuery.lowercase()
                         item.transaction.note.lowercase().contains(q) ||
@@ -169,19 +184,23 @@ fun TransactionsScreen(
                                 (item.toAccount?.name?.lowercase()?.contains(q) == true) ||
                                 item.transaction.amount.toString().contains(q)
                     }
-                    matchesPeriod && matchesType && matchesAccount && matchesSearch
+                    matchesPeriod && matchesType && matchesAccount && matchesCategory && matchesSearch
                 }
             },
-            onApply = { p, t, a ->
+            onApply = { p, t, a, c ->
                 selectedPeriodFilter = p
                 selectedTypeFilter = t
                 selectedAccountId = a
+                selectedCategoryId = c
+                onFilterCategoryChange?.invoke(c)
                 showFilterSheet = false
             },
             onReset = {
                 selectedPeriodFilter = "THIS_MONTH"
                 selectedTypeFilter = null
                 selectedAccountId = null
+                selectedCategoryId = null
+                onFilterCategoryChange?.invoke(null)
             },
             onDismiss = {
                 showFilterSheet = false
@@ -299,6 +318,87 @@ fun TransactionsScreen(
                 }
             }
 
+            // Quick Category Horizontal Pill Bar
+            val quickCategories = remember(categories, selectedTypeFilter) {
+                when (selectedTypeFilter) {
+                    TransactionType.EXPENSE -> categories.filter { it.type == TransactionType.EXPENSE }
+                    TransactionType.INCOME -> categories.filter { it.type == TransactionType.INCOME }
+                    else -> categories
+                }
+            }
+
+            if (quickCategories.isNotEmpty()) {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("quick_category_bar")
+                ) {
+                    // All Categories Chip
+                    item(key = "quick_cat_all") {
+                        val isAllSelected = selectedCategoryId == null
+                        FilterChip(
+                            selected = isAllSelected,
+                            onClick = {
+                                selectedCategoryId = null
+                                onFilterCategoryChange?.invoke(null)
+                            },
+                            label = {
+                                Text(
+                                    text = Localization.getString(Localization.Key.ALL, isBn),
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isAllSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            leadingIcon = if (isAllSelected) {
+                                {
+                                    Icon(
+                                        imageVector = Icons.Default.Check,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(14.dp)
+                                    )
+                                }
+                            } else null,
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("quick_cat_all")
+                        )
+                    }
+
+                    // Individual Category Chips
+                    items(quickCategories, key = { it.id }) { cat ->
+                        val isSelected = selectedCategoryId == cat.id
+                        val catColor = parseColorHex(cat.colorHex)
+                        FilterChip(
+                            selected = isSelected,
+                            onClick = {
+                                val newId = if (isSelected) null else cat.id
+                                selectedCategoryId = newId
+                                onFilterCategoryChange?.invoke(newId)
+                            },
+                            label = {
+                                Text(
+                                    text = cat.localizedName(isBn),
+                                    fontSize = 12.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
+                                )
+                            },
+                            leadingIcon = {
+                                Icon(
+                                    imageVector = if (isSelected) Icons.Default.Check else getIconByName(cat.iconName),
+                                    contentDescription = null,
+                                    modifier = Modifier.size(14.dp),
+                                    tint = if (isSelected) MaterialTheme.colorScheme.primary else catColor
+                                )
+                            },
+                            shape = RoundedCornerShape(8.dp),
+                            modifier = Modifier.testTag("quick_cat_${cat.id}")
+                        )
+                    }
+                }
+            }
+
             // Compact Active Filter Pills (Shown only when non-default filters are active)
             AnimatedVisibility(
                 visible = hasActiveFilters,
@@ -389,6 +489,32 @@ fun TransactionsScreen(
                         }
                     }
 
+                    // Category Chip (if selected)
+                    if (selectedCategoryId != null) {
+                        val categoryName = categories.find { it.id == selectedCategoryId }?.localizedName(isBn) ?: (if (isBn) "ক্যাটাগরি" else "Category")
+                        item(key = "active_category") {
+                            FilterChip(
+                                selected = true,
+                                onClick = { showFilterSheet = true },
+                                label = { Text(categoryName, fontSize = 12.sp) },
+                                trailingIcon = {
+                                    Icon(
+                                        imageVector = Icons.Default.Close,
+                                        contentDescription = "Remove",
+                                        modifier = Modifier
+                                            .size(14.dp)
+                                            .clickable {
+                                                selectedCategoryId = null
+                                                onFilterCategoryChange?.invoke(null)
+                                            }
+                                    )
+                                },
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.testTag("active_filter_category")
+                            )
+                        }
+                    }
+
                     // Clear All Button
                     item(key = "clear_all_button") {
                         TextButton(
@@ -396,6 +522,8 @@ fun TransactionsScreen(
                                 selectedPeriodFilter = "THIS_MONTH"
                                 selectedTypeFilter = null
                                 selectedAccountId = null
+                                selectedCategoryId = null
+                                onFilterCategoryChange?.invoke(null)
                             },
                             contentPadding = PaddingValues(horizontal = 8.dp),
                             modifier = Modifier
@@ -421,11 +549,14 @@ fun TransactionsScreen(
                         .padding(16.dp),
                     contentAlignment = Alignment.Center
                 ) {
-                    val isFiltering = selectedAccountId != null || selectedTypeFilter != null || searchQuery.isNotBlank() || selectedPeriodFilter != "THIS_MONTH"
+                    val isFiltering = selectedAccountId != null || selectedTypeFilter != null || selectedCategoryId != null || searchQuery.isNotBlank() || selectedPeriodFilter != "THIS_MONTH"
+                    val catFilteredName = if (selectedCategoryId != null) categories.find { it.id == selectedCategoryId }?.localizedName(isBn) else null
                     EmptyStateView(
                         icon = Icons.AutoMirrored.Filled.ReceiptLong,
                         title = Localization.getString(Localization.Key.EMPTY_TRANSACTIONS, isBn),
-                        description = if (selectedAccountId != null) {
+                        description = if (catFilteredName != null) {
+                            if (isBn) "'$catFilteredName' ক্যাটাগরির কোনো লেনদেন পাওয়া যায়নি।" else "No transactions found for category '$catFilteredName'."
+                        } else if (selectedAccountId != null) {
                             if (isBn) "এই অ্যাকাউন্টের জন্য কোনো লেনদেন পাওয়া যায়নি।" else "No transactions found for this account."
                         } else {
                             if (isBn) "পছন্দের ফিল্টারে বা সময়ে কোনো লেনদেন পাওয়া যায়নি।" else "No transactions match your current search or filter criteria."
@@ -439,8 +570,10 @@ fun TransactionsScreen(
                             if (isFiltering) {
                                 selectedAccountId = null
                                 selectedTypeFilter = null
+                                selectedCategoryId = null
                                 selectedPeriodFilter = "THIS_MONTH"
                                 searchQuery = ""
+                                onFilterCategoryChange?.invoke(null)
                             } else {
                                 onNavigateToAddTransaction()
                             }

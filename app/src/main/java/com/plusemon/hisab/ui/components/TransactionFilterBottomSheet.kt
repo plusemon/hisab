@@ -58,6 +58,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.plusemon.hisab.data.model.Category
 import com.plusemon.hisab.data.model.TransactionType
 import com.plusemon.hisab.domain.util.Formatters
 import com.plusemon.hisab.domain.util.Localization
@@ -72,11 +73,13 @@ fun TransactionFilterBottomSheet(
     initialPeriod: String,
     initialType: TransactionType?,
     initialAccountId: Long?,
+    initialCategoryId: Long? = null,
     accounts: List<AccountWithBalance>,
+    categories: List<Category> = emptyList(),
     isBangla: Boolean,
     useBanglaDigits: Boolean,
-    calculateMatchCount: (period: String, type: TransactionType?, accountId: Long?) -> Int,
-    onApply: (period: String, type: TransactionType?, accountId: Long?) -> Unit,
+    calculateMatchCount: (period: String, type: TransactionType?, accountId: Long?, categoryId: Long?) -> Int,
+    onApply: (period: String, type: TransactionType?, accountId: Long?, categoryId: Long?) -> Unit,
     onReset: () -> Unit,
     onDismiss: () -> Unit,
     modifier: Modifier = Modifier
@@ -85,14 +88,23 @@ fun TransactionFilterBottomSheet(
     var draftPeriod by remember(initialPeriod) { mutableStateOf(initialPeriod) }
     var draftType by remember(initialType) { mutableStateOf(initialType) }
     var draftAccountId by remember(initialAccountId) { mutableStateOf(initialAccountId) }
+    var draftCategoryId by remember(initialCategoryId) { mutableStateOf(initialCategoryId) }
 
     val isDark = MaterialTheme.colorScheme.surface.luminance() < 0.5f
     val sheetContainerColor = if (isDark) Color(0xFF161F30) else MaterialTheme.colorScheme.surface
     val dragHandleColor = if (isDark) Color(0xFF475569) else MaterialTheme.colorScheme.outlineVariant
 
-    val isAnyFilterActive = draftPeriod != "THIS_MONTH" || draftType != null || draftAccountId != null
-    val matchCount = remember(draftPeriod, draftType, draftAccountId) {
-        calculateMatchCount(draftPeriod, draftType, draftAccountId)
+    val isAnyFilterActive = draftPeriod != "THIS_MONTH" || draftType != null || draftAccountId != null || draftCategoryId != null
+    val matchCount = remember(draftPeriod, draftType, draftAccountId, draftCategoryId) {
+        calculateMatchCount(draftPeriod, draftType, draftAccountId, draftCategoryId)
+    }
+
+    val displayedCategories = remember(categories, draftType) {
+        when (draftType) {
+            TransactionType.EXPENSE -> categories.filter { it.type == TransactionType.EXPENSE }
+            TransactionType.INCOME -> categories.filter { it.type == TransactionType.INCOME }
+            else -> categories
+        }
     }
 
     ModalBottomSheet(
@@ -160,6 +172,7 @@ fun TransactionFilterBottomSheet(
                             draftPeriod = "THIS_MONTH"
                             draftType = null
                             draftAccountId = null
+                            draftCategoryId = null
                             onReset()
                         },
                         enabled = isAnyFilterActive,
@@ -486,6 +499,85 @@ fun TransactionFilterBottomSheet(
                         }
                     }
                 }
+                // Section 4: Category
+                if (displayedCategories.isNotEmpty()) {
+                    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Category,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(18.dp)
+                            )
+                            Text(
+                                text = Localization.getString(Localization.Key.CATEGORY, isBangla),
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            // All Categories
+                            val isAllCatSelected = draftCategoryId == null
+                            FilterChip(
+                                selected = isAllCatSelected,
+                                onClick = { draftCategoryId = null },
+                                label = {
+                                    Text(
+                                        Localization.getString(Localization.Key.ALL_CATEGORIES, isBangla),
+                                        fontSize = 13.sp,
+                                        fontWeight = if (isAllCatSelected) FontWeight.SemiBold else FontWeight.Normal
+                                    )
+                                },
+                                leadingIcon = {
+                                    Icon(
+                                        imageVector = if (isAllCatSelected) Icons.Default.Check else Icons.Default.Category,
+                                        contentDescription = null,
+                                        modifier = Modifier.size(15.dp)
+                                    )
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                modifier = Modifier.testTag("filter_category_all")
+                            )
+
+                            // Specific Categories
+                            displayedCategories.forEach { cat ->
+                                val isSelected = draftCategoryId == cat.id
+                                FilterChip(
+                                    selected = isSelected,
+                                    onClick = {
+                                        draftCategoryId = if (isSelected) null else cat.id
+                                    },
+                                    label = {
+                                        Text(
+                                            text = cat.localizedName(isBangla),
+                                            fontSize = 13.sp,
+                                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal
+                                        )
+                                    },
+                                    leadingIcon = {
+                                        Icon(
+                                            imageVector = if (isSelected) Icons.Default.Check else getIconByName(cat.iconName),
+                                            contentDescription = null,
+                                            modifier = Modifier.size(15.dp),
+                                            tint = if (isSelected) MaterialTheme.colorScheme.primary else parseColorHex(cat.colorHex)
+                                        )
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    modifier = Modifier.testTag("filter_category_${cat.id}")
+                                )
+                            }
+                        }
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(8.dp))
@@ -498,7 +590,7 @@ fun TransactionFilterBottomSheet(
             ) {
                 Button(
                     onClick = {
-                        onApply(draftPeriod, draftType, draftAccountId)
+                        onApply(draftPeriod, draftType, draftAccountId, draftCategoryId)
                     },
                     modifier = Modifier
                         .fillMaxWidth()

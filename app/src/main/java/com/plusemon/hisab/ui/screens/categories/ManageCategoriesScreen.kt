@@ -87,6 +87,7 @@ import kotlinx.coroutines.launch
 fun ManageCategoriesScreen(
     viewModel: HisabViewModel,
     onNavigateBack: () -> Unit,
+    onCategoryClick: ((Category) -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val settings by viewModel.settings.collectAsState()
@@ -217,6 +218,7 @@ fun ManageCategoriesScreen(
                             CategoryListItem(
                                 category = cat,
                                 isBangla = isBn,
+                                onClick = onCategoryClick?.let { callback -> { callback(cat) } },
                                 onEdit = {
                                     categoryToEdit = cat
                                     showAddEditDialog = true
@@ -293,6 +295,7 @@ fun ManageCategoriesScreen(
 private fun CategoryListItem(
     category: Category,
     isBangla: Boolean,
+    onClick: (() -> Unit)? = null,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
     modifier: Modifier = Modifier
@@ -300,6 +303,7 @@ private fun CategoryListItem(
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .then(if (onClick != null) Modifier.clickable { onClick() } else Modifier)
             .testTag("category_card_${category.id}"),
         shape = RoundedCornerShape(14.dp),
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface),
@@ -328,9 +332,9 @@ private fun CategoryListItem(
                     color = MaterialTheme.colorScheme.onSurface
                 )
                 Text(
-                    text = if (isBangla) category.nameEn else category.nameBn,
+                    text = if (isBangla) "${category.nameEn} • লেনদেন দেখতে ট্যাপ করুন" else "${category.nameBn} • Tap to view transactions",
                     style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f)
                 )
             }
 
