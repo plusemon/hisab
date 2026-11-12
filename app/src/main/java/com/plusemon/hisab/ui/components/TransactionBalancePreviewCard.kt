@@ -58,7 +58,9 @@ fun TransactionBalancePreviewCard(
     isBn: Boolean,
     accountName: String? = null,
     targetAccountName: String? = null,
-    amount: Double = 0.0
+    amount: Double = 0.0,
+    isEditing: Boolean = false,
+    netDifference: Double? = null
 ) {
     val isSourceNegative = resultingBalance < 0.0
     val isTargetNegative = targetCurrentBalance != null && resultingTargetBalance != null && resultingTargetBalance < 0.0
@@ -168,6 +170,33 @@ fun TransactionBalancePreviewCard(
                             )
                         }
                     }
+                } else if (isEditing) {
+                    val diff = netDifference ?: (resultingBalance - currentBalance)
+                    val (badgeText, badgeColor) = when {
+                        kotlin.math.abs(diff) < 0.001 -> {
+                            (if (isBn) "ব্যালেন্সে পরিবর্তন নেই" else "No balance change") to MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        diff > 0 -> {
+                            val formatted = Formatters.formatAmount(diff, currencySymbol, isBn)
+                            "+ $formatted" to IncomeGreen
+                        }
+                        else -> {
+                            val formatted = Formatters.formatAmount(kotlin.math.abs(diff), currencySymbol, isBn)
+                            "- $formatted" to ExpenseRed
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = badgeColor.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = badgeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = badgeColor,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
                 } else if (amount > 0.0) {
                     val badgeColor = when (transactionType) {
                         TransactionType.EXPENSE -> ExpenseRed
@@ -264,7 +293,9 @@ fun TransactionBalancePreviewCard(
                     // After (New Balance)
                     val resultColor = when {
                         isSourceNegative -> MaterialTheme.colorScheme.error
-                        transactionType == TransactionType.INCOME && amount > 0 -> IncomeGreen
+                        isEditing && (netDifference ?: (resultingBalance - currentBalance)) > 0.001 -> IncomeGreen
+                        isEditing && (netDifference ?: (resultingBalance - currentBalance)) < -0.001 -> ExpenseRed
+                        !isEditing && transactionType == TransactionType.INCOME && amount > 0 -> IncomeGreen
                         else -> MaterialTheme.colorScheme.primary
                     }
 

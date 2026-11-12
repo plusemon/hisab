@@ -361,7 +361,11 @@ fun AddEditTransactionScreen(
     Scaffold(
         topBar = {
             val titleText = if (currentStep == 2) {
-                Localization.getString(Localization.Key.CONFIRM_TRANSACTION, isBn)
+                if (existingTransaction != null) {
+                    if (isBn) "পরিবর্তন নিশ্চিতকরণ" else "Confirm Changes"
+                } else {
+                    Localization.getString(Localization.Key.CONFIRM_TRANSACTION, isBn)
+                }
             } else if (existingTransaction == null) {
                 when (pagerState.currentPage) {
                     0 -> Localization.getString(Localization.Key.ADD_EXPENSE, isBn)
@@ -384,6 +388,26 @@ fun AddEditTransactionScreen(
                 isNetworkConnected = isNetworkConnected,
                 actions = {
                     if (existingTransaction != null && currentStep == 1) {
+                        IconButton(
+                            onClick = {
+                                val amount = amountText.toDoubleOrNull() ?: 0.0
+                                if (amount <= 0.0) {
+                                    errorMessage = if (isBn) "সঠিক টাকার পরিমাণ লিখুন" else "Please enter a valid amount"
+                                } else {
+                                    handleSave(transactionType)
+                                }
+                            },
+                            modifier = Modifier
+                                .size(40.dp)
+                                .testTag("quick_save_transaction_btn")
+                        ) {
+                            Icon(
+                                Icons.Default.Check,
+                                contentDescription = if (isBn) "সংরক্ষণ" else "Save",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
                         IconButton(
                             onClick = {
                                 showDeleteConfirmation = true
@@ -460,7 +484,8 @@ fun AddEditTransactionScreen(
                             onRemoveReceipt = { receiptUriStr = null },
                             errorMessage = errorMessage,
                             onNext = { handleNext(transactionType) },
-                            onEnsureDefaultData = { viewModel.ensureDefaultData() }
+                            onEnsureDefaultData = { viewModel.ensureDefaultData() },
+                            isEditing = true
                         )
                     }
                 } else {
@@ -616,22 +641,51 @@ fun AddEditTransactionScreen(
                     1 -> TransactionType.INCOME
                     else -> TransactionType.TRANSFER
                 }
-                val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
-                val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+                val isEditing = existingTransaction != null
+                val origTx = existingTransaction?.transaction
+
                 val amountVal = amountText.toDoubleOrNull() ?: 0.0
                 val feeVal = feeText.toDoubleOrNull() ?: 0.0
                 val exchangeRateVal = exchangeRateText.toDoubleOrNull() ?: 1.0
 
-                val resultingBalance = when (activeType) {
-                    TransactionType.EXPENSE -> currentBalance - amountVal - feeVal
-                    TransactionType.INCOME -> currentBalance + amountVal
-                    TransactionType.TRANSFER -> currentBalance - amountVal - feeVal
+                // Baseline balance helper: balance of an account without the transaction being edited
+                val getBaselineBalance: (Long) -> Double = { accId ->
+                    val liveBalance = accountsWithBalances.find { it.account.id == accId }?.balance ?: 0.0
+                    if (origTx == null) {
+                        liveBalance
+                    } else {
+                        var base = liveBalance
+                        if (origTx.accountId == accId) {
+                            base = when (origTx.type) {
+                                TransactionType.EXPENSE -> base + origTx.amount
+                                TransactionType.INCOME -> base - origTx.amount
+                                TransactionType.TRANSFER -> base + (origTx.amount + origTx.fee)
+                            }
+                        }
+                        if (origTx.type == TransactionType.TRANSFER && origTx.toAccountId == accId) {
+                            val origReceived = origTx.amount * (if (origTx.exchangeRate > 0) origTx.exchangeRate else 1.0)
+                            base -= origReceived
+                        }
+                        base
+                    }
                 }
+
+                val selectedAccountWithBal = accountsWithBalances.find { it.account.id == selectedAccountId }
+                val currentBalance = selectedAccountWithBal?.balance ?: 0.0
+                val sourceBaseline = getBaselineBalance(selectedAccountId)
+
+                val resultingBalance = when (activeType) {
+                    TransactionType.EXPENSE -> sourceBaseline - amountVal - feeVal
+                    TransactionType.INCOME -> sourceBaseline + amountVal
+                    TransactionType.TRANSFER -> sourceBaseline - amountVal - feeVal
+                }
+                val netDifference = if (isEditing) resultingBalance - currentBalance else null
 
                 val targetAccountWithBal = accountsWithBalances.find { it.account.id == selectedToAccountId }
                 val targetCurrentBalance = targetAccountWithBal?.balance
-                val resultingTargetBalance = if (targetCurrentBalance != null) {
-                    targetCurrentBalance + (amountVal * exchangeRateVal)
+                val resultingTargetBalance = if (targetCurrentBalance != null && activeType == TransactionType.TRANSFER) {
+                    val targetBaseline = getBaselineBalance(selectedToAccountId)
+                    targetBaseline + (amountVal * exchangeRateVal)
                 } else null
 
                 val selectedCategory = categories.firstOrNull { it.id == selectedCategoryId }
@@ -661,6 +715,8 @@ fun AddEditTransactionScreen(
                         resultingBalance = resultingBalance,
                         targetCurrentBalance = targetCurrentBalance,
                         resultingTargetBalance = resultingTargetBalance,
+                        isEditing = isEditing,
+                        netDifference = netDifference,
                         onBackClick = { currentStep = 1 },
                         onConfirmSaveClick = { handleSave(activeType) }
                     )
@@ -700,6 +756,7 @@ private fun TransactionFormFields(
     errorMessage: String?,
     onNext: () -> Unit,
     onEnsureDefaultData: () -> Unit,
+    isEditing: Boolean = false,
     modifier: Modifier = Modifier
 ) {
     Column(modifier = modifier) {
@@ -1182,7 +1239,11 @@ private fun TransactionFormFields(
             )
         ) {
             Text(
-                text = Localization.getString(Localization.Key.NEXT_STEP, isBn),
+                text = if (isEditing) {
+                    if (isBn) "পরিবর্তন পর্যালোচনা করুন" else "Review Changes"
+                } else {
+                    Localization.getString(Localization.Key.NEXT_STEP, isBn)
+                },
                 fontSize = 16.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White

@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.pager.HorizontalPager
@@ -103,39 +104,55 @@ class MainActivity : ComponentActivity() {
                     }
                 }
 
-                // Authentication Gate: Check loading first to prevent screen flicker
-                if (isAuthInitializing && currentUser == null) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .background(MaterialTheme.colorScheme.background),
-                        contentAlignment = androidx.compose.ui.Alignment.Center
-                    ) {
-                        androidx.compose.material3.CircularProgressIndicator(
-                            color = MaterialTheme.colorScheme.primary
+                Box(modifier = Modifier.fillMaxSize()) {
+                    // Authentication Gate: Check loading first to prevent screen flicker
+                    if (isAuthInitializing && currentUser == null) {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .background(MaterialTheme.colorScheme.background),
+                            contentAlignment = androidx.compose.ui.Alignment.Center
+                        ) {
+                            androidx.compose.material3.CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                    } else if (currentUser == null) {
+                        AuthScreen(
+                            viewModel = viewModel,
+                            snackbarHostState = snackbarHostState
+                        )
+                    } else if (isLocked) {
+                        PinLockScreen(
+                            isBangla = settings.language == "bn",
+                            onPinEntered = { pin -> viewModel.verifyPin(pin) },
+                            onForgotOrReset = { viewModel.signOut() }
+                        )
+                    } else {
+                        HisabMainApp(
+                            viewModel = viewModel,
+                            snackbarHostState = snackbarHostState
                         )
                     }
-                } else if (currentUser == null) {
-                    AuthScreen(viewModel = viewModel)
-                } else if (isLocked) {
-                    PinLockScreen(
-                        isBangla = settings.language == "bn",
-                        onPinEntered = { pin -> viewModel.verifyPin(pin) },
-                        onForgotOrReset = { viewModel.signOut() }
-                    )
-                } else {
-                    HisabMainApp(
-                        viewModel = viewModel,
-                        snackbarHostState = snackbarHostState
-                    )
-                }
 
-                // Global Blocking Loading Dialog (for Sign-In, Sign-Out, Account Deletion, Data Reset)
-                blockingLoadingState?.let { state ->
-                    BlockingLoadingDialog(
-                        state = state,
-                        isBangla = settings.language == "bn"
-                    )
+                    // Global SnackbarHost when not inside HisabMainApp
+                    if (currentUser == null || isLocked) {
+                        SnackbarHost(
+                            hostState = snackbarHostState,
+                            modifier = Modifier
+                                .align(androidx.compose.ui.Alignment.BottomCenter)
+                                .navigationBarsPadding()
+                                .padding(bottom = 24.dp)
+                        )
+                    }
+
+                    // Global Blocking Loading Dialog (for Sign-In, Sign-Out, Account Deletion, Data Reset)
+                    blockingLoadingState?.let { state ->
+                        BlockingLoadingDialog(
+                            state = state,
+                            isBangla = settings.language == "bn"
+                        )
+                    }
                 }
             }
         }

@@ -30,6 +30,7 @@ import com.plusemon.hisab.data.model.UserSettings
 import com.plusemon.hisab.data.model.Vendor
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
@@ -3074,8 +3075,17 @@ class FirestoreRepositoryImpl(
             IllegalStateException("Firebase is not initialized")
         )
         try {
-            val candidateIds = resolveCandidateUserIds(userId, firestore)
-            Log.i(TAG, "deleteAllUserData: Deleting cloud data for candidate IDs: $candidateIds")
+            val fbUser = try {
+                if (FirebaseApp.getApps(context).isNotEmpty()) FirebaseAuth.getInstance().currentUser else null
+            } catch (_: Exception) { null }
+            val currentAuthUid = fbUser?.uid
+
+            // Under Firestore security rules, client can only delete documents under their own auth UID
+            val targetIds = linkedSetOf<String>()
+            if (!currentAuthUid.isNullOrBlank()) targetIds.add(currentAuthUid)
+            if (userId.isNotBlank()) targetIds.add(userId)
+
+            Log.i(TAG, "deleteAllUserData: Deleting cloud data in parallel for IDs: $targetIds")
             val subcollections = listOf(
                 COLLECTION_TRANSACTIONS,
                 COLLECTION_ACCOUNTS,
@@ -3092,33 +3102,42 @@ class FirestoreRepositoryImpl(
                 COLLECTION_SETTINGS
             )
 
-            for (candId in candidateIds) {
-                val userDocRef = firestore.collection(COLLECTION_USERS).document(candId)
-                for (subcoll in subcollections) {
-                    try {
-                        val snapshot = userDocRef.collection(subcoll).get().awaitTask(10000L)
-                        if (!snapshot.isEmpty) {
-                            snapshot.documents.chunked(450).forEach { chunk ->
-                                val batch = firestore.batch()
-                                chunk.forEach { doc ->
-                                    batch.delete(doc.reference)
+            coroutineScope {
+                targetIds.map { targetId ->
+                    async(Dispatchers.IO) {
+                        val userDocRef = firestore.collection(COLLECTION_USERS).document(targetId)
+                        // Run all subcollections in parallel
+                        coroutineScope {
+                            subcollections.map { subcoll ->
+                                async(Dispatchers.IO) {
+                                    try {
+                                        val snapshot = userDocRef.collection(subcoll).get().awaitTask(8000L)
+                                        if (!snapshot.isEmpty) {
+                                            snapshot.documents.chunked(450).forEach { chunk ->
+                                                val batch = firestore.batch()
+                                                chunk.forEach { doc ->
+                                                    batch.delete(doc.reference)
+                                                }
+                                                batch.commit().awaitTask(8000L)
+                                            }
+                                        }
+                                    } catch (e: Exception) {
+                                        Log.w(TAG, "deleteAllUserData: subcoll $subcoll delete for $targetId skipped or error: ${e.message}")
+                                    }
                                 }
-                                batch.commit().awaitTask(10000L)
-                            }
+                            }.awaitAll()
                         }
-                    } catch (e: Exception) {
-                        Log.w(TAG, "deleteAllUserData: error deleting subcollection $subcoll for $candId: ${e.message}")
-                    }
-                }
 
-                // Delete the user root document
-                try {
-                    userDocRef.delete().awaitTask(6000L)
-                } catch (e: Exception) {
-                    Log.w(TAG, "deleteAllUserData: error deleting user doc $candId: ${e.message}")
-                }
+                        // Delete the user root document
+                        try {
+                            userDocRef.delete().awaitTask(6000L)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "deleteAllUserData: error deleting user doc $targetId: ${e.message}")
+                        }
+                    }
+                }.awaitAll()
             }
-            Log.i(TAG, "deleteAllUserData: Successfully purged all cloud data for $userId")
+            Log.i(TAG, "deleteAllUserData: Successfully purged cloud data for $userId")
             Result.success(Unit)
         } catch (e: Exception) {
             Log.e(TAG, "deleteAllUserData failed: ${e.message}", e)

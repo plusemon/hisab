@@ -82,6 +82,8 @@ fun TransactionConfirmationView(
     resultingBalance: Double,
     targetCurrentBalance: Double? = null,
     resultingTargetBalance: Double? = null,
+    isEditing: Boolean = false,
+    netDifference: Double? = null,
     onBackClick: () -> Unit,
     onConfirmSaveClick: () -> Unit,
     modifier: Modifier = Modifier
@@ -125,8 +127,13 @@ fun TransactionConfirmationView(
                         tint = MaterialTheme.colorScheme.primary
                     )
                     Spacer(modifier = Modifier.width(6.dp))
+                    val stepTitle = if (isEditing) {
+                        if (isBn) "ধাপ ২ এর ২ • পরিবর্তন পর্যালোচনা" else "Step 2 of 2 • Review Changes"
+                    } else {
+                        Localization.getString(Localization.Key.STEP_2_PROGRESS, isBn) + " • " + Localization.getString(Localization.Key.CONFIRM_TRANSACTION, isBn)
+                    }
                     Text(
-                        text = Localization.getString(Localization.Key.STEP_2_PROGRESS, isBn) + " • " + Localization.getString(Localization.Key.CONFIRM_TRANSACTION, isBn),
+                        text = stepTitle,
                         style = MaterialTheme.typography.labelSmall,
                         fontWeight = FontWeight.Bold,
                         color = MaterialTheme.colorScheme.onPrimaryContainer
@@ -209,6 +216,36 @@ fun TransactionConfirmationView(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         fontWeight = FontWeight.Medium
                     )
+                }
+
+                if (isEditing) {
+                    val diff = netDifference ?: (resultingBalance - currentBalance)
+                    Spacer(modifier = Modifier.height(6.dp))
+                    val (diffText, diffColor) = when {
+                        kotlin.math.abs(diff) < 0.001 -> {
+                            (if (isBn) "ব্যালেন্স অপরিবর্তিত থাকবে (±০)" else "Balance remains unchanged (±0)") to MaterialTheme.colorScheme.onSurfaceVariant
+                        }
+                        diff > 0 -> {
+                            val formatted = Formatters.formatAmount(diff, currencySymbol, isBn)
+                            (if (isBn) "ব্যালেন্সে ফেরত আসবে: +$formatted" else "Balance refund: +$formatted") to IncomeGreen
+                        }
+                        else -> {
+                            val formatted = Formatters.formatAmount(kotlin.math.abs(diff), currencySymbol, isBn)
+                            (if (isBn) "ব্যালেন্স থেকে অতিরিক্ত কমবে: -$formatted" else "Additional deduction: -$formatted") to ExpenseRed
+                        }
+                    }
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = diffColor.copy(alpha = 0.12f)
+                    ) {
+                        Text(
+                            text = diffText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = diffColor,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                        )
+                    }
                 }
             }
         }
@@ -393,7 +430,9 @@ fun TransactionConfirmationView(
             isBn = isBn,
             accountName = accountName,
             targetAccountName = targetAccountName,
-            amount = amount
+            amount = amount,
+            isEditing = isEditing,
+            netDifference = netDifference
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -415,8 +454,14 @@ fun TransactionConfirmationView(
                     modifier = Modifier.size(15.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
+                val noticeText = if (isEditing) {
+                    if (isBn) "পরিবর্তনগুলো সংরক্ষণ করতে 'পরিবর্তন সংরক্ষণ করুন' চাপুন, অথবা পেছনের ধাপে ফিরে যান।"
+                    else "Tap 'Save Changes' to update this transaction, or 'Back' to make changes."
+                } else {
+                    Localization.getString(Localization.Key.CONFIRMATION_NOTICE, isBn)
+                }
                 Text(
-                    text = Localization.getString(Localization.Key.CONFIRMATION_NOTICE, isBn),
+                    text = noticeText,
                     style = MaterialTheme.typography.bodySmall,
                     fontSize = 11.5.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
@@ -472,8 +517,13 @@ fun TransactionConfirmationView(
                     modifier = Modifier.size(18.dp)
                 )
                 Spacer(modifier = Modifier.width(6.dp))
+                val buttonText = if (isEditing) {
+                    if (isBn) "পরিবর্তন সংরক্ষণ করুন" else "Save Changes"
+                } else {
+                    Localization.getString(Localization.Key.CONFIRM_AND_SAVE, isBn)
+                }
                 Text(
-                    text = Localization.getString(Localization.Key.CONFIRM_AND_SAVE, isBn),
+                    text = buttonText,
                     fontWeight = FontWeight.Bold,
                     fontSize = 14.5.sp,
                     color = Color.White,

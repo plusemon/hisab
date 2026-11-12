@@ -22,7 +22,11 @@ import java.util.UUID
 import android.util.Log
 import androidx.credentials.ClearCredentialStateRequest
 import androidx.credentials.CredentialManager
+import com.google.android.gms.tasks.Task
 import com.google.firebase.FirebaseApp
+import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 import com.google.firebase.firestore.FirebaseFirestore
 import com.google.firebase.firestore.SetOptions
 import com.plusemon.hisab.R
@@ -375,47 +379,79 @@ class AuthRepository(
         _currentUser.value = null
     }
 
-    suspend fun deleteAccountAndData(userId: String) = withContext(Dispatchers.IO) {
-        // 1. Purge all Firestore cloud data FIRST before credentials/auth are cleared
+    private suspend fun <T> Task<T>.awaitTask(timeoutMs: Long = 10000L): T = withContext(Dispatchers.IO) {
+        kotlinx.coroutines.withTimeout(timeoutMs) {
+            suspendCancellableCoroutine { continuation ->
+                addOnSuccessListener { result ->
+                    if (continuation.isActive) continuation.resume(result)
+                }
+                addOnFailureListener { exception ->
+                    if (continuation.isActive) continuation.resumeWithException(exception)
+                }
+                addOnCanceledListener {
+                    continuation.cancel()
+                }
+            }
+        }
+    }
+
+    suspend fun deleteAccountAndData(userId: String, onProgress: ((String) -> Unit)? = null) = withContext(Dispatchers.IO) {
+        val fbUser = try {
+            if (FirebaseApp.getApps(context).isNotEmpty()) com.google.firebase.auth.FirebaseAuth.getInstance().currentUser else null
+        } catch (_: Exception) { null }
+        val effectiveUids = linkedSetOf<String>()
+        if (userId.isNotBlank()) effectiveUids.add(userId)
+        fbUser?.uid?.takeIf { it.isNotBlank() }?.let { effectiveUids.add(it) }
+
+        // STEP 1: Purge all Cloud Firestore data FIRST before auth/session credentials are touched
+        onProgress?.invoke("cloud_deleting")
         try {
             firestoreRepository?.deleteAllUserData(userId)
         } catch (e: Exception) {
             Log.w("AuthRepository", "Cloud data purge error: ${e.message}")
         }
 
-        // 2. Wipe all local Room database records in foreign-key safe order
-        try {
-            db.shopCreditPaymentDao().deleteAllPaymentsForUser(userId)
-            db.shopCreditPurchaseDao().deleteAllPurchasesForUser(userId)
-            db.loanRepaymentDao().deleteAllRepaymentsForUser(userId)
-            db.loanDebtDao().deleteAllDebtsForUser(userId)
-            db.transactionDao().deleteAllTransactionsForUser(userId)
-            db.recurringDao().deleteAllRulesForUser(userId)
-            db.budgetDao().deleteAllBudgetsForUser(userId)
-            db.savingsGoalDao().deleteAllGoalsForUser(userId)
-            db.contactDao().deleteAllContactsForUser(userId)
-            db.vendorDao().deleteAllVendorsForUser(userId)
-            db.categoryDao().deleteAllCategoriesForUser(userId)
-            db.accountDao().deleteAllAccountsForUser(userId)
-            db.settingsDao().deleteSettingsForUser(userId)
-            db.userDao().deleteUser(userId)
-        } catch (e: Exception) {
-            Log.w("AuthRepository", "Local Room data wipe error: ${e.message}")
+        // STEP 2: Wipe all local Room database records in foreign-key safe order for all candidate UIDs
+        onProgress?.invoke("local_deleting")
+        for (uid in effectiveUids) {
+            try {
+                db.shopCreditPaymentDao().deleteAllPaymentsForUser(uid)
+                db.shopCreditPurchaseDao().deleteAllPurchasesForUser(uid)
+                db.loanRepaymentDao().deleteAllRepaymentsForUser(uid)
+                db.loanDebtDao().deleteAllDebtsForUser(uid)
+                db.transactionDao().deleteAllTransactionsForUser(uid)
+                db.recurringDao().deleteAllRulesForUser(uid)
+                db.budgetDao().deleteAllBudgetsForUser(uid)
+                db.savingsGoalDao().deleteAllGoalsForUser(uid)
+                db.contactDao().deleteAllContactsForUser(uid)
+                db.vendorDao().deleteAllVendorsForUser(uid)
+                db.categoryDao().deleteAllCategoriesForUser(uid)
+                db.accountDao().deleteAllAccountsForUser(uid)
+                db.settingsDao().deleteSettingsForUser(uid)
+                db.userDao().deleteUser(uid)
+            } catch (e: Exception) {
+                Log.w("AuthRepository", "Local Room data wipe error for $uid: ${e.message}")
+            }
         }
 
-        // 3. Clear all stored shared preferences
+        // STEP 3: Clear all stored shared preferences
         prefs.edit().clear().apply()
         try {
             context.getSharedPreferences("hisab_settings_prefs", Context.MODE_PRIVATE).edit().clear().apply()
         } catch (_: Exception) {}
 
-        // 4. Delete Firebase Auth user or sign out
+        // STEP 4: Confirm Data Deletion is Complete
+        onProgress?.invoke("data_deleted_confirmed")
+
+        // STEP 5: Delete Firebase Auth user account with await
+        onProgress?.invoke("account_deleting")
         try {
             if (FirebaseApp.getApps(context).isNotEmpty()) {
-                val fbUser = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
-                if (fbUser != null) {
+                val userToDelete = com.google.firebase.auth.FirebaseAuth.getInstance().currentUser
+                if (userToDelete != null) {
                     try {
-                        fbUser.delete()
+                        userToDelete.delete().awaitTask(10000L)
+                        Log.i("AuthRepository", "Firebase auth user deleted successfully")
                     } catch (e: Exception) {
                         Log.w("AuthRepository", "Firebase auth delete failed: ${e.message}")
                     }
@@ -426,12 +462,14 @@ class AuthRepository(
             Log.w("AuthRepository", "Firebase sign out error: ${e.message}")
         }
 
-        // 5. Clear credential manager state
+        // STEP 6: Clear Google CredentialManager credentials
         try {
             CredentialManager.create(context).clearCredentialState(ClearCredentialStateRequest())
         } catch (e: Exception) {
             Log.w("AuthRepository", "Failed to clear credential state: ${e.message}")
         }
+
+        // STEP 7: Reset session state
         _currentUser.value = null
     }
 }

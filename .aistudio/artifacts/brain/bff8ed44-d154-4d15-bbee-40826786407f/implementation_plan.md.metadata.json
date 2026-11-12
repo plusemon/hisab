@@ -1,6 +1,0 @@
-{
-  "summary":  "Comprehensive architectural plan for adding a dedicated Lending & Borrowing Transaction History ledger and repayment breakdown in Hisab. Users will be able to click on any loan/debt card to open a detailed ledger bottom sheet displaying the initial loan creation, chronological repayment installments with accounts and notes, remaining balance trajectory, and options to delete repayments with automatic balance rollback.",
-  "updatedAt":  "2026-11-02T07:10:24.925880877Z",
-  "requestFeedback":  true,
-  "userFacing":  true
-}

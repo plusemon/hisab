@@ -48,6 +48,8 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SnackbarHost
+import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -96,7 +98,8 @@ import kotlin.coroutines.resume
 @Composable
 fun AuthScreen(
     viewModel: HisabViewModel,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    snackbarHostState: SnackbarHostState? = null
 ) {
     val context = LocalContext.current
     val clipboardManager = LocalClipboardManager.current
@@ -787,6 +790,17 @@ fun AuthScreen(
             }
 
             Spacer(modifier = Modifier.height(28.dp))
+        }
+
+        // Dedicated SnackbarHost for AuthScreen so notifications (e.g. account deletion) appear immediately
+        snackbarHostState?.let { hostState ->
+            SnackbarHost(
+                hostState = hostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .navigationBarsPadding()
+                    .padding(bottom = 16.dp)
+            )
         }
     }
 }

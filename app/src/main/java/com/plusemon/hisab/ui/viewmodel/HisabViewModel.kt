@@ -160,11 +160,20 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         _blockingLoadingState.value = null
     }
 
+    fun showToast(message: String) {
+        viewModelScope.launch(Dispatchers.Main) {
+            try {
+                android.widget.Toast.makeText(getApplication(), message, android.widget.Toast.LENGTH_LONG).show()
+            } catch (_: Exception) {}
+            _snackbarMessage.emit(message)
+        }
+    }
+
     suspend fun withBlockingLoading(
         title: String,
         message: String,
         isDanger: Boolean = false,
-        timeoutMs: Long = 15000L,
+        timeoutMs: Long = 30000L,
         block: suspend () -> Unit
     ) {
         val isBn = _settings.value.language == "bn"
@@ -174,17 +183,17 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 block()
             }
         } catch (e: TimeoutCancellationException) {
+            val seconds = (timeoutMs / 1000).toInt()
             android.util.Log.w("HisabViewModel", "Blocking operation timed out after ${timeoutMs}ms")
-            _snackbarMessage.emit(
-                if (isBn)
-                    "অপারেশনের সময় শেষ হয়ে গেছে (১৫ সেকেন্ড)। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করুন।"
-                else
-                    "Operation timed out after 15 seconds. Please check your internet connection."
-            )
+            val timeoutMsg = if (isBn)
+                "অপারেশনের সময় শেষ হয়ে গেছে ($seconds সেকেন্ড)। অনুগ্রহ করে ইন্টারনেট সংযোগ পরীক্ষা করুন।"
+            else
+                "Operation timed out after $seconds seconds. Please check your internet connection."
+            showToast(timeoutMsg)
         } catch (e: Exception) {
             android.util.Log.e("HisabViewModel", "Error during blocking operation: ${e.message}", e)
             val errorText = e.localizedMessage ?: if (isBn) "একটি সমস্যা হয়েছে" else "An error occurred"
-            _snackbarMessage.emit(errorText)
+            showToast(errorText)
         } finally {
             _blockingLoadingState.value = null
         }
@@ -946,7 +955,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 title = if (isBn) "গুগল সাইন ইন" else "Google Sign-In",
                 message = if (isBn) "অ্যাকাউন্ট যাচাই ও তথ্য প্রস্তুত করা হচ্ছে..." else "Verifying account credentials and loading data...",
                 isDanger = false,
-                timeoutMs = 15000L
+                timeoutMs = 30000L
             ) {
                 _isAuthLoading.value = true
                 _authError.value = null
@@ -1077,7 +1086,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 title = if (isBn) "সাইন আউট" else "Signing Out",
                 message = if (isBn) "অ্যাকাউন্ট সেশন সুরক্ষিতভাবে শেষ করা হচ্ছে..." else "Securing your session and signing out...",
                 isDanger = true,
-                timeoutMs = 15000L
+                timeoutMs = 30000L
             ) {
                 authRepository.signOut()
             }
@@ -1089,21 +1098,35 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
         val isBn = _settings.value.language == "bn"
         viewModelScope.launch {
             withBlockingLoading(
-                title = if (isBn) "অ্যাকাউন্ট ডিলিট" else "Deleting Account",
+                title = if (isBn) "অ্যাকাউন্ট ও ডেটা ডিলিট" else "Deleting Account & Data",
                 message = if (isBn)
-                    "অ্যাকাউন্ট ও সমস্ত ক্লাউড ডেটা স্থায়ীভাবে মুছে ফেলা হচ্ছে..."
+                    "প্রথমে সমস্ত ক্লাউড ও স্থানীয় হিসাব মুছে ফেলা হচ্ছে..."
                 else
-                    "Deleting account and permanently wiping all cloud data...",
+                    "First deleting all cloud and local transaction data...",
                 isDanger = true,
-                timeoutMs = 15000L
+                timeoutMs = 35000L
             ) {
-                authRepository.deleteAccountAndData(user.id)
-                _snackbarMessage.emit(
-                    if (isBn)
-                        "অ্যাকাউন্ট ও সমস্ত তথ্য সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
-                    else
-                        "Account and all data have been completely deleted"
-                )
+                // Delete all data first, confirm completion, then delete account
+                authRepository.deleteAccountAndData(user.id) { stage ->
+                    when (stage) {
+                        "account_deleting", "data_deleted_confirmed" -> {
+                            _blockingLoadingState.value = BlockingLoadingState(
+                                title = if (isBn) "অ্যাকাউন্ট ডিলিট" else "Deleting Account",
+                                message = if (isBn)
+                                    "ডাটা সফলভাবে মুছে ফেলা হয়েছে, এখন অ্যাকাউন্ট ডিলিট করা হচ্ছে..."
+                                else
+                                    "Data confirmed wiped, now deleting account...",
+                                isDanger = true
+                            )
+                        }
+                    }
+                }
+                resetUserData()
+                val successMessage = if (isBn)
+                    "অ্যাকাউন্ট ও সমস্ত তথ্য সম্পূর্ণভাবে মুছে ফেলা হয়েছে"
+                else
+                    "Account and all data have been completely deleted"
+                showToast(successMessage)
             }
         }
     }
@@ -2156,7 +2179,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 else
                     "Clearing all local and cloud transaction records...",
                 isDanger = true,
-                timeoutMs = 15000L
+                timeoutMs = 30000L
             ) {
                 try {
                     firestoreRepository.deleteAllUserData(user.id)
@@ -2166,7 +2189,7 @@ class HisabViewModel(application: Application) : AndroidViewModel(application) {
                 hisabRepository.clearAllData(user.id)
                 authRepository.ensureUserDataSeeded(user.id, syncToCloudIfSeeded = false)
                 refreshMonthlyData(user.id)
-                _snackbarMessage.emit(
+                showToast(
                     if (isBn) "সব হিসাব মুছে ফেলা হয়েছে" else "All data cleared"
                 )
             }
